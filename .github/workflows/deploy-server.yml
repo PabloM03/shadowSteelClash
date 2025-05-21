@@ -2,36 +2,37 @@ name: Build and Deploy Unity Server
 
 on:
   push:
-    branches: [ main ]        # cada push a main lanza el pipeline
+    branches: [ main ]
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-    # 1️⃣  Descarga tu código
-    - name: Checkout code
-      uses: actions/checkout@v3
+    # 1️⃣  Descarga el repo
+    - uses: actions/checkout@v3
 
-    # 2️⃣  Inicia sesión y activa Unity Personal
+    # 2️⃣  Activa Unity Personal con tu cuenta
     - name: Activate Unity
       uses: game-ci/unity-activate@v2
+      with:
+        unityVersion: 6000.0.29f1            # tu versión exacta
       env:
         UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
         UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
-    # 3️⃣  Compila el servidor (headless Linux)
+    # 3️⃣  Compila el servidor headless
     - name: Build headless Linux server
       uses: game-ci/unity-builder@v2
       with:
-        unityVersion: 6000.0.29f1          # pon tu versión exacta
+        unityVersion: 6000.0.29f1            # misma versión
         targetPlatform: StandaloneLinux64
         buildMethod: BuildScript.PerformServerBuild
       env:
-        UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}     # se re-usan para el builder
+        UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
         UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
-    # 4️⃣  Sube TODO el build (ejecutable + carpeta *_Data/ + .so) a tu VPS
+    # 4️⃣  Sube TODO el build a tu VPS
     - name: Upload server build to VPS
       uses: appleboy/scp-action@v0.1.5
       with:
