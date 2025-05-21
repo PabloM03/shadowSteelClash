@@ -1,0 +1,39 @@
+name: Build and Deploy Unity Server
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Unity Builder
+      uses: game-ci/unity-builder@v2
+      with:
+        unityVersion: 2022.3.0f1 # Ajusta según tu versión
+        targetPlatform: StandaloneLinux64
+        buildMethod: BuildScript.PerformServerBuild
+
+    - name: Upload server build to VPS (carpeta completa)
+      uses: appleboy/scp-action@v0.1.5
+      with:
+        host: ${{ secrets.SERVER_IP }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        source: "buildServer/**"
+        target: "/home/${{ secrets.SERVER_USER }}/server"
+
+    - name: Restart remote game server
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.SERVER_IP }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          sudo systemctl restart mygame-server
