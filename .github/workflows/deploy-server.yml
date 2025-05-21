@@ -2,38 +2,51 @@ name: Build and Deploy Unity Server
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]        # cada push a main lanza el pipeline
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
+    # 1️⃣  Descarga tu código
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Set up Unity Builder
+    # 2️⃣  Inicia sesión y activa Unity Personal
+    - name: Activate Unity
+      uses: game-ci/unity-activate@v2
+      env:
+        UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+        UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+    # 3️⃣  Compila el servidor (headless Linux)
+    - name: Build headless Linux server
       uses: game-ci/unity-builder@v2
       with:
-        unityVersion: 2022.3.0f1 # Ajusta según tu versión
+        unityVersion: 6000.0.29f1          # pon tu versión exacta
         targetPlatform: StandaloneLinux64
         buildMethod: BuildScript.PerformServerBuild
+      env:
+        UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}     # se re-usan para el builder
+        UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
-    - name: Upload server build to VPS (carpeta completa)
+    # 4️⃣  Sube TODO el build (ejecutable + carpeta *_Data/ + .so) a tu VPS
+    - name: Upload server build to VPS
       uses: appleboy/scp-action@v0.1.5
       with:
-        host: ${{ secrets.SERVER_IP }}
+        host:     ${{ secrets.SERVER_IP }}
         username: ${{ secrets.SERVER_USER }}
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        source: "buildServer/**"
-        target: "/home/${{ secrets.SERVER_USER }}/server"
+        key:      ${{ secrets.SSH_PRIVATE_KEY }}
+        source:   "buildServer/**"
+        target:   "/home/${{ secrets.SERVER_USER }}/server"
 
+    # 5️⃣  Reinicia el servicio remoto
     - name: Restart remote game server
       uses: appleboy/ssh-action@v1.0.0
       with:
-        host: ${{ secrets.SERVER_IP }}
+        host:     ${{ secrets.SERVER_IP }}
         username: ${{ secrets.SERVER_USER }}
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        key:      ${{ secrets.SSH_PRIVATE_KEY }}
         script: |
           sudo systemctl restart mygame-server
