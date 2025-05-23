@@ -17,6 +17,5 @@ MemoryCaptures/
 *.zip
 *.7z
 *.tar.*
-*.dll
 *.dylib
 *.so
