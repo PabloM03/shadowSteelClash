@@ -1,4 +1,4 @@
-name: Build and Deploy Unity 6 (Windows runner)
+name: Build & Deploy Unity 6  (Windows runner)
 
 on:
   push:
@@ -6,23 +6,23 @@ on:
 
 jobs:
   build-and-deploy:
-    runs-on: windows-latest       # usa VM Windows
+    runs-on: windows-latest
 
     steps:
-    # 1️⃣  Clona el repo
+    # 1️⃣  Clonar el repositorio
     - uses: actions/checkout@v3
 
-    # 2️⃣  Instala Unity 6 y hace login con tu cuenta
-    - name: Install & activate Unity 6000.0.29f1
-      uses: game-ci/unity-setup@v2        # ← nombre correcto
+    # 2️⃣  Instalar y activar Unity 6000.0.29f1
+    - name: Set up Unity 6000.0.29f1
+      uses: game-ci/unity-setup@v3          # ← versión correcta
       with:
-        unityVersion: 6000.0.29f1
+        unityVersion: 6000.0.29f1           # tu editor
       env:
         UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
         UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
-    # 3️⃣  Compila el servidor (Windows headless)
-    - name: Build server
+    # 3️⃣  Compilar el servidor (headless, Windows)
+    - name: Build headless server
       shell: pwsh
       run: |
         & "C:\Program Files\Unity\Hub\Editor\6000.0.29f1\Editor\Unity.exe" `
@@ -33,7 +33,7 @@ jobs:
         UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
         UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
-    # 4️⃣  Copia todo el build al VPS
+    # 4️⃣  Subir el build completo al VPS
     - name: Upload build to VPS
       uses: appleboy/scp-action@v0.1.5
       with:
@@ -43,7 +43,7 @@ jobs:
         source:   "buildServer/**"
         target:   "/home/${{ secrets.SERVER_USER }}/server"
 
-    # 5️⃣  Reinicia el servicio remoto
+    # 5️⃣  Reiniciar servicio remoto
     - name: Restart game service
       uses: appleboy/ssh-action@v1.0.0
       with:
