@@ -8,20 +8,20 @@ jobs:
   build-and-deploy:
     runs-on: windows-latest
 
+    env:
+      UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
     steps:
-    # 1️⃣  Clonar el repositorio
     - uses: actions/checkout@v3
 
-    # 2️⃣  Instalar y activar Unity 6000.0.29f1
-    - name: Set up Unity 6000.0.29f1
-      uses: game-ci/unity-setup@v3          # ← versión correcta
+    # Instala y activa Unity 6
+    - name: Setup Unity 6000.0.29f1
+      uses: game-ci/unity-setup@v3
       with:
-        unityVersion: 6000.0.29f1           # tu editor
-      env:
-        UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
-        UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        unityVersion: 6000.0.29f1            # tu versión exacta
 
-    # 3️⃣  Compilar el servidor (headless, Windows)
+    # Compila headless; deja el build en buildServer/
     - name: Build headless server
       shell: pwsh
       run: |
@@ -29,11 +29,8 @@ jobs:
           -batchmode -nographics -quit `
           -projectPath . `
           -executeMethod BuildScript.PerformServerBuild
-      env:
-        UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
-        UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
-    # 4️⃣  Subir el build completo al VPS
+    # Copia todo el build al VPS
     - name: Upload build to VPS
       uses: appleboy/scp-action@v0.1.5
       with:
@@ -43,7 +40,7 @@ jobs:
         source:   "buildServer/**"
         target:   "/home/${{ secrets.SERVER_USER }}/server"
 
-    # 5️⃣  Reiniciar servicio remoto
+    # Reinicia tu servicio (usa Wine si VPS es Linux)
     - name: Restart game service
       uses: appleboy/ssh-action@v1.0.0
       with:

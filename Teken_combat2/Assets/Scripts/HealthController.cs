@@ -35,13 +35,14 @@ public class HealthController : MonoBehaviour
     {
         // Inicializar el Animator obteniéndolo del mismo objeto
         animator = GetComponent<Animator>();
-	live=true;
-	iddle =false;
-	health*=power;
-	maxHealth=Mathf.Max(health, 0);
-	lifeOfBar = transform.Find("Canvas/background/LifeBar").GetComponentInChildren<Image>();	
-	y= transform.position.y;
-	sounds = GetComponent<Sounds>();
+        live = true;
+        iddle = false;
+        health *= power;
+        maxHealth = Mathf.Max(health, 0);
+        lifeOfBar = transform.Find("Canvas/background/LifeBar").GetComponentInChildren<Image>();
+        y = transform.position.y;
+        sounds = GetComponent<Sounds>();
+        LifeOfBar();
     }
 
     void Update()

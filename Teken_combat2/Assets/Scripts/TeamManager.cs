@@ -14,14 +14,26 @@ public class TeamManager : NetworkBehaviour
     public override void OnStartLocalPlayer()
     {
         base.OnStartLocalPlayer();
+
         var hc = GetComponent<HealthController>();
         if (hc != null)
         {
             lastSentHealth = hc.Health;
         }
 
-        // Reintento de sincronización por si el cliente se conecta tarde
+        // Reintento de sincronización individual
         InvokeRepeating(nameof(RequestServerResync), 2f, 5f);
+
+        // Solicitar sincronización completa del estado del servidor
+        Invoke(nameof(RequestAllPlayersHealth), 1f);
+    }
+
+    private void RequestAllPlayersHealth()
+    {
+        if (isLocalPlayer)
+        {
+            CmdRequestAllHealth();
+        }
     }
 
     private void Update()
@@ -72,7 +84,6 @@ public class TeamManager : NetworkBehaviour
         }
     }
 
-    // Si un cliente se conecta o hay una caída, que pida estado al servidor
     private void RequestServerResync()
     {
         if (isLocalPlayer)
@@ -87,6 +98,15 @@ public class TeamManager : NetworkBehaviour
         if (healthRecords.TryGetValue(netId, out float savedHealth))
         {
             TargetForceHealthSync(sender, netId, savedHealth);
+        }
+    }
+
+    [Command]
+    private void CmdRequestAllHealth(NetworkConnectionToClient sender = null)
+    {
+        foreach (var pair in healthRecords)
+        {
+            TargetForceHealthSync(sender, pair.Key, pair.Value);
         }
     }
 
