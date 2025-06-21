@@ -6251,7 +6251,7 @@ MonoBehaviour:
   onlineScene: 
   offlineSceneLoadDelay: 0
   transport: {fileID: 0}
-  networkAddress: localhost
+  networkAddress: 16.16.245.82
   maxConnections: 20
   disconnectInactiveConnections: 0
   disconnectInactiveTimeout: 60
@@ -6318,7 +6318,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e49645b7595aedc44abad868868d6af0, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  startAsServer: 1
+  startAsServer: 0
 --- !u!1 &923113628
 GameObject:
   m_ObjectHideFlags: 0

@@ -3539,6 +3539,7 @@ GameObject:
   - component: {fileID: 291798295306167544}
   - component: {fileID: -2306577010665344862}
   - component: {fileID: -4469551977060483351}
+  - component: {fileID: 4703224382148220739}
   m_Layer: 0
   m_Name: Knight
   m_TagString: Player
@@ -3651,6 +3652,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   enemies:
   - {fileID: 0}
+  health: 100
   maxHealth: 0
   power: 1
 --- !u!136 &6192700451182923901
@@ -3802,6 +3804,21 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 04e162dbfcb39e84fb048d35dc1b44c0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  syncDirection: 0
+  syncMode: 0
+  syncInterval: 0
+--- !u!114 &4703224382148220739
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7772819458650101420}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 622bb2d016acb604ca8f1e7df6d02c1a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   syncDirection: 0
