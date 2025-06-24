@@ -1,4 +1,4 @@
-name: Build & Deploy Unity 6  (Windows runner)
+name: Build & Deploy Unity 6 (Linux runner con Builder)
 
 on:
   push:
@@ -6,41 +6,41 @@ on:
 
 jobs:
   build-and-deploy:
-    runs-on: windows-latest
-
-    env:
-      UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
-      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+    runs-on: ubuntu-latest    # ⚠️ Unity Builder usa Docker, mejor en Linux
 
     steps:
     - uses: actions/checkout@v3
 
-    # Instala y activa Unity 6
-    - name: Setup Unity 6000.0.29f1
-      uses: game-ci/unity-setup@v3
-      with:
-        unityVersion: 6000.0.29f1            # tu versión exacta
-
-    # Compila headless; deja el build en buildServer/
+    # Unity Builder se encarga de todo: instalar Unity, activar, compilar
     - name: Build headless server
-      shell: pwsh
-      run: |
-        & "C:\Program Files\Unity\Hub\Editor\6000.0.29f1\Editor\Unity.exe" `
-          -batchmode -nographics -quit `
-          -projectPath . `
-          -executeMethod BuildScript.PerformServerBuild
+      uses: game-ci/unity-builder@v4
+      env:
+        UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+        UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        UNITY_SERIAL:   ${{ secrets.UNITY_SERIAL }}   # o usa UNITY_LICENSE si es Floating
+      with:
+        unityVersion:    6000.0.29f1
+        targetPlatform:  LinuxHeadless         # o StandaloneWindows64 según destino
+        buildMethod:     BuildScript.PerformServerBuild
+        allowDirtyBuild: true                  # si no haces commit antes del build
 
-    # Copia todo el build al VPS
+    # Crea artefacto de salida (opcional)
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: server-build
+        path: build/**
+
+    # Sube al servidor VPS
     - name: Upload build to VPS
       uses: appleboy/scp-action@v0.1.5
       with:
         host:     ${{ secrets.SERVER_IP }}
         username: ${{ secrets.SERVER_USER }}
         key:      ${{ secrets.SSH_PRIVATE_KEY }}
-        source:   "buildServer/**"
+        source:   "build/**"
         target:   "/home/${{ secrets.SERVER_USER }}/server"
 
-    # Reinicia tu servicio (usa Wine si VPS es Linux)
     - name: Restart game service
       uses: appleboy/ssh-action@v1.0.0
       with:
