@@ -2,8 +2,8 @@ name: Deploy Unity Server (auto desde Cloud Build)
 
 on:
   repository_dispatch:
-    types: [unity-build-complete]  # Disparado por Unity Cloud Build
-  workflow_dispatch:               # Puedes lanzarlo manualmente si quieres probar
+    types: [unity-build-complete]  # ← lo lanza Unity Cloud con Webhook
+  workflow_dispatch:               # ← puedes lanzarlo tú desde GitHub o curl
 
 jobs:
   deploy-server:
@@ -22,7 +22,7 @@ jobs:
           "https://build-api.cloud.unity3d.com/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/buildtargets/$BUILD_TARGET/builds/latest/download" \
           --output servidor.zip
         echo "� Descomprimiendo..."
-        unzip -o servidor.zip -d build/
+        unzip servidor.zip -d build/
 
     - name: Subir build al VPS
       uses: appleboy/scp-action@v0.1.5
