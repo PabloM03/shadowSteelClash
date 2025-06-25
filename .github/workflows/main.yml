@@ -17,10 +17,17 @@ jobs:
         PROJECT_ID:      ${{ secrets.PROJECT_ID }}
         BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
       run: |
-        echo "� Obteniendo URL de descarga..."
-        share_url=$(curl -s -H "Authorization: Bearer $UNITY_API_TOKEN" \
-          "https://build-api.cloud.unity3d.com/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/buildtargets/$BUILD_TARGET/builds/latest/share" \
-          | jq -r .share_url)
+        echo "� Obteniendo JSON de share..."
+        raw=$(curl -s -H "Authorization: Bearer $UNITY_API_TOKEN" \
+          "https://build-api.cloud.unity3d.com/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/buildtargets/$BUILD_TARGET/builds/latest/share")
+        echo "JSON recibido: $raw"
+
+        echo "� Extrayendo shareUrl..."
+        share_url=$(jq -r .shareUrl <<<"$raw")
+        if [[ -z "$share_url" || "$share_url" == "null" ]]; then
+          echo "❌ No se encontró shareUrl en la respuesta."
+          exit 1
+        fi
 
         echo "� Descargando build desde: $share_url"
         curl -sL "$share_url" --output servidor.zip
