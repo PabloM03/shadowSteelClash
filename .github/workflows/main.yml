@@ -9,34 +9,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Descargar último build de Unity Cloud
+    - name: Descargar build de Unity Cloud
       env:
         UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
-        # Prepara la cabecera Basic
-        UNITY_AUTH:      ${{ secrets.UNITY_AUTH }}
         ORG_ID:          ${{ secrets.ORG_ID }}
         PROJECT_ID:      ${{ secrets.PROJECT_ID }}
         BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
       run: |
-        echo "� Solicitando JSON de share..."
-        raw=$(curl -s \
-          -H "Authorization: Basic $UNITY_AUTH" \
+        UNITY_AUTH=$(printf "%s:" "$UNITY_API_TOKEN" | base64)
+        raw=$(curl -s -H "Authorization: Basic $UNITY_AUTH" \
           "https://build-api.cloud.unity3d.com/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/buildtargets/$BUILD_TARGET/builds/latest/share")
-
-        echo "� JSON recibido:"
-        echo "$raw"
-
-        echo "� Extrayendo shareUrl..."
         share_url=$(jq -r .shareUrl <<<"$raw")
         if [[ -z "$share_url" || "$share_url" == "null" ]]; then
-          echo "❌ No se encontró shareUrl."
-          exit 1
-        fi
-
-        echo "� Descargando build desde: $share_url"
-        curl -sL "$share_url" --output servidor.zip
-
-        echo "� Descomprimiendo..."
+          echo "shareUrl vacío — revisa UNITY_API_TOKEN / IDs"; exit 1; fi
+        curl -sL "$share_url" -o servidor.zip
         unzip -o servidor.zip -d build/
 
     - name: Subir build al VPS
@@ -48,12 +34,11 @@ jobs:
         source:   "build/**"
         target:   "/home/${{ secrets.SERVER_USER }}/server"
 
-    - name: Reiniciar servidor
+    - name: Reiniciar servicio
       uses: appleboy/ssh-action@v1.0.0
       with:
         host:     ${{ secrets.SERVER_IP }}
         username: ${{ secrets.SERVER_USER }}
         key:      ${{ secrets.SSH_PRIVATE_KEY }}
         script: |
-          echo "♻️ Reiniciando servicio del juego..."
           sudo systemctl restart mygame-server
