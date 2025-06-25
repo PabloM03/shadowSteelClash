@@ -23,7 +23,6 @@ jobs:
         echo "� Solicitando share URL del último build..."
         raw=$(curl -s -H "Authorization: Basic $UNITY_AUTH" \
           "https://build-api.cloud.unity3d.com/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/buildtargets/$BUILD_TARGET/builds/latest/share")
-
         share_url=$(jq -r .shareUrl <<<"$raw")
         if [[ -z "$share_url" || "$share_url" == "null" ]]; then
           echo "❌ ERROR: shareUrl no encontrado en la respuesta:" >&2
@@ -32,11 +31,25 @@ jobs:
         fi
 
         echo "✅ shareUrl obtenido: $share_url"
+        echo "�️ Limpiando workspace local ./build/..."
+        rm -rf build/ servidor.zip
+        mkdir -p build
+
         echo "� Descargando artefacto..."
         curl -sL "$share_url" -o servidor.zip
 
         echo "�️ Descomprimiendo en ./build/"
         unzip -o servidor.zip -d build/
+
+    - name: Limpiar build anterior en el VPS
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host:     ${{ secrets.SERVER_IP }}
+        username: ${{ secrets.SERVER_USER }}
+        key:      ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          echo "� Limpiando carpeta remota /home/${{ secrets.SERVER_USER }}/server..."
+          rm -rf /home/${{ secrets.SERVER_USER }}/server/*
 
     - name: Subir build al VPS
       uses: appleboy/scp-action@v0.1.5
