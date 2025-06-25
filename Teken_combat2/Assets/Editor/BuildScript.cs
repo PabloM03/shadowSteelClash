@@ -1,29 +1,40 @@
 using UnityEditor;
 using UnityEngine;
+using UnityEditor.Build.Reporting;
+
 
 public class BuildScript
 {
     public static void PerformServerBuild()
     {
-        // Carpeta de salida del build
-        string buildPath = "buildServer/servidorJuego.x86_64";
+        // Ruta relativa para Cloud Build (la carpeta "BuildOutput" se comprimirá en el .zip automáticamente)
+        string buildPath = "BuildOutput/servidorJuego.x86_64";
 
-        // Escenas que quieres incluir (las que aparecen en tu Build Settings)
+        // Escenas que deben estar incluidas en el build
         string[] scenes = {
-            "Assets/Scenes/scene1 2.unity"
+            "Assets/Scenes/scene1 2.unity" // Asegúrate que el nombre esté bien exacto y que la escena esté en Build Settings
         };
 
-        // Configuración de build para Linux headless (modo servidor)
+        // Opciones del compilador
         BuildPlayerOptions buildOptions = new BuildPlayerOptions
         {
             scenes = scenes,
             locationPathName = buildPath,
             target = BuildTarget.StandaloneLinux64,
-            options = BuildOptions.EnableHeadlessMode
+            options = BuildOptions.EnableHeadlessMode | BuildOptions.CompressWithLz4
         };
 
-        // Ejecutar el build
-        BuildPipeline.BuildPlayer(buildOptions);
-        Debug.Log("✅ Build de servidor completado en: " + buildPath);
+        // Lanzar el build
+        BuildReport report = BuildPipeline.BuildPlayer(buildOptions);
+
+        // Validar el resultado
+        if (report.summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded)
+        {
+            Debug.Log("✅ Build de servidor completado exitosamente en: " + buildPath);
+        }
+        else
+        {
+            Debug.LogError("❌ El build del servidor ha fallado.");
+        }
     }
 }

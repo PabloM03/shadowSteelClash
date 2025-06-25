@@ -1,38 +1,28 @@
-name: Build & Deploy Unity 6 (Linux runner con Builder)
+name: Deploy Unity Server (auto desde Cloud Build)
 
 on:
-  push:
-    branches: [ main ]
+  repository_dispatch:
+    types: [unity-build-complete]
+  workflow_dispatch:  # ← Esto permite dispararlo tú manualmente con curl
 
 jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest    # ⚠️ Unity Builder usa Docker, mejor en Linux
+  deploy-server:
+    runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-
-    # Unity Builder se encarga de todo: instalar Unity, activar, compilar
-    - name: Build headless server
-      uses: game-ci/unity-builder@v4
+    - name: Descargar último build de Unity Cloud
       env:
-        UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
-        UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-        UNITY_SERIAL:   ${{ secrets.UNITY_SERIAL }}   # o usa UNITY_LICENSE si es Floating
-      with:
-        unityVersion:    6000.0.29f1
-        targetPlatform:  LinuxHeadless         # o StandaloneWindows64 según destino
-        buildMethod:     BuildScript.PerformServerBuild
-        allowDirtyBuild: true                  # si no haces commit antes del build
+        UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
+        ORG_ID: "TU_ORG_ID"
+        PROJECT_ID: "TU_PROJECT_ID"
+        BUILD_TARGET: "TU_BUILD_TARGET_ID"
+      run: |
+        curl -s -H "Authorization: Bearer $UNITY_API_TOKEN" \
+          "https://build-api.cloud.unity3d.com/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/buildtargets/$BUILD_TARGET/builds/latest/download" \
+          --output servidor.zip
+        unzip servidor.zip -d build/
 
-    # Crea artefacto de salida (opcional)
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: server-build
-        path: build/**
-
-    # Sube al servidor VPS
-    - name: Upload build to VPS
+    - name: Subir build al VPS
       uses: appleboy/scp-action@v0.1.5
       with:
         host:     ${{ secrets.SERVER_IP }}
@@ -41,7 +31,7 @@ jobs:
         source:   "build/**"
         target:   "/home/${{ secrets.SERVER_USER }}/server"
 
-    - name: Restart game service
+    - name: Reiniciar servidor
       uses: appleboy/ssh-action@v1.0.0
       with:
         host:     ${{ secrets.SERVER_IP }}
