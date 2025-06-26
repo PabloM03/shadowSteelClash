@@ -10,15 +10,15 @@ jobs:
 
     steps:
       # ────────────────────────────────────────────────────────────────
-      # 0) Preparar runner (instalar jq)
-      - name: Preparar runner (instalar jq)
+      # 0) Prepara el runner: instala jq y unzip
+      - name: Preparar runner (instalar jq y unzip)
         run: |
           sudo apt-get update
           sudo apt-get install -y jq unzip
 
       # ────────────────────────────────────────────────────────────────
-      # 1) Limpiar artefactos de builds antiguos (todos menos el último success)
-      - name: Limpiar artefactos de builds exitosos antiguos en Unity Cloud Build
+      # 1) Limpiar artefactos de builds exitosos antiguos
+      - name: Limpiar artefactos de builds exitosos antiguos
         env:
           UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
           ORG_ID:          ${{ secrets.ORG_ID }}
@@ -26,23 +26,21 @@ jobs:
           BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
         run: |
           set -euo pipefail
-          # Basic Auth: base64("API_KEY:")
           AUTH=$(printf '%s:' "$UNITY_API_TOKEN" | base64)
 
           echo "� Listando builds exitosos..."
-          builds=$(curl -s \
+          all_builds=$(curl -s \
             -H "Authorization: Basic $AUTH" \
-            "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds" \
-            | jq -r '.[] | select(.buildStatus=="success") | .build' \
-            | sort -n)
+            "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds")
 
+          builds=$(jq -r 'map(select(.buildStatus=="success")) | map(.build) | sort' <<<"$all_builds")
           if [[ -z "$builds" ]]; then
             echo "⚠️  No hay builds exitosos para limpiar."
             exit 0
           fi
 
           latest=$(echo "$builds" | tail -1)
-          echo "✔ Último build exitoso detectado: #$latest"
+          echo "✔ Último build exitoso: #$latest"
 
           for num in $builds; do
             if [[ "$num" -ne "$latest" ]]; then
@@ -54,8 +52,8 @@ jobs:
           done
 
       # ────────────────────────────────────────────────────────────────
-      # 2) Descargar el último build exitoso
-      - name: Descargar build de Unity Cloud
+      # 2) Descargar el último build exitoso directamente
+      - name: Descargar último build exitoso
         env:
           UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
           ORG_ID:          ${{ secrets.ORG_ID }}
@@ -65,31 +63,35 @@ jobs:
           set -euo pipefail
           AUTH=$(printf '%s:' "$UNITY_API_TOKEN" | base64)
 
-          echo "� Creando share link para el último build exitoso..."
-          shareid=$(curl -s -X POST \
+          echo "� Volviendo a listar builds exitosos para extraer URL..."
+          all_builds=$(curl -s \
             -H "Authorization: Basic $AUTH" \
-            "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds/latest/share" \
-            | jq -r .shareid)
+            "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds")
 
-          if [[ -z "$shareid" || "$shareid" == "null" ]]; then
-            echo "❌ ERROR: no se pudo crear el share link." >&2
+          latest=$(jq 'map(select(.buildStatus=="success")) | map(.build) | max' <<<"$all_builds")
+          echo "✔ Build exitoso más reciente: #$latest"
+
+          download_url=$(jq -r \
+            '.[] | select(.buildStatus=="success" and .build == '"$latest"') | .links.download_primary.href' \
+            <<<"$all_builds")
+
+          if [[ -z "$download_url" || "$download_url" == "null" ]]; then
+            echo "❌ No se pudo extraer la URL de descarga." >&2
             exit 1
           fi
 
-          share_url="https://cloud.unity.com/public-share/build-automation/share?shareId=${shareid}"
-          echo "✅ Share URL: $share_url"
-
+          echo "✅ URL de descarga: $download_url"
           echo "⬇️  Descargando artefacto..."
           rm -rf build servidor.zip
           mkdir -p build
-          curl -sL "$share_url" -o servidor.zip
+          curl -sL "$download_url" -o servidor.zip
 
           echo "� Descomprimiendo en ./build/..."
           unzip -o servidor.zip -d build/
 
       # ────────────────────────────────────────────────────────────────
       # 3) Limpiar carpeta remota en el VPS
-      - name: Limpiar build anterior en el VPS
+      - name: Limpiar carpeta remota en VPS
         uses: appleboy/ssh-action@v1.0.0
         with:
           host:     ${{ secrets.SERVER_IP }}
@@ -99,7 +101,7 @@ jobs:
             rm -rf /home/${{ secrets.SERVER_USER }}/server/*
 
       # ────────────────────────────────────────────────────────────────
-      # 4) Subir el build nuevo al VPS
+      # 4) Subir el nuevo build al VPS
       - name: Subir build al VPS
         uses: appleboy/scp-action@v0.1.5
         with:
@@ -110,7 +112,7 @@ jobs:
           target:   "/home/${{ secrets.SERVER_USER }}/server"
 
       # ────────────────────────────────────────────────────────────────
-      # 5) Reiniciar el servicio remoto
+      # 5) Reiniciar servicio remoto
       - name: Reiniciar servicio
         uses: appleboy/ssh-action@v1.0.0
         with:
