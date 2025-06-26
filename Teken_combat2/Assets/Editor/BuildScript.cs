@@ -4,6 +4,8 @@ using UnityEditor.Build.Reporting;
 using UnityEngine;
 using System;
 using System.Net;
+using System.IO;
+using System.Net;
 
 public class BuildScript
 {
@@ -47,6 +49,7 @@ public class BuildScript
     }
 
     // Método síncrono para enviar el repository_dispatch
+    
     static void DispatchToGitHubSync()
     {
         var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
@@ -57,7 +60,6 @@ public class BuildScript
         const string repo  = "shadowSteelClash";
         var url   = $"https://api.github.com/repos/{owner}/{repo}/dispatches";
 
-        // Payload JSON
         var payload = JsonUtility.ToJson(new { event_type = "unity-build-complete" });
 
         using (var client = new WebClient())
@@ -66,9 +68,20 @@ public class BuildScript
             client.Headers.Add("Authorization", $"token {token}");
             client.Headers.Add("Content-Type", "application/json");
 
-            // Este UploadString es bloqueante y no provoca dead-lock en Unity
-            string response = client.UploadString(url, "POST", payload);
-            Debug.Log("� Dispatch enviado a GitHub correctamente. Response: " + response);
+            try
+            {
+                string response = client.UploadString(url, "POST", payload);
+                Debug.Log("� Dispatch enviado a GitHub correctamente. Response: " + response);
+            }
+            catch (WebException wex) when (wex.Response is HttpWebResponse resp)
+            {
+                string body;
+                using (var sr = new StreamReader(resp.GetResponseStream()))
+                    body = sr.ReadToEnd();
+
+                Debug.LogError($"❌ Dispatch falló: HTTP {(int)resp.StatusCode} {resp.StatusCode}\n{body}");
+                throw;  // para que Unity Cloud Build marque error si lo deseas
+            }
         }
     }
 }
