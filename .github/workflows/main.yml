@@ -9,88 +9,110 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Limpiar artefactos antiguos en Unity Cloud Build
-      env:
-        UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
-        ORG_ID:          ${{ secrets.ORG_ID }}
-        PROJECT_ID:      ${{ secrets.PROJECT_ID }}
-        BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
-      run: |
-        set -e
-        echo "� Eliminando artefactos de builds antiguos en Unity Cloud Build..."
-        AUTH=$(echo -n "${UNITY_API_TOKEN}:" | base64)
-        curl -s -X DELETE \
-          -H "Authorization: Basic $AUTH" \
-          "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds/artifacts"
+      # ── 1) Limpiar artefactos de builds exitosos antiguos ─────────────────
+      - name: Limpiar artefactos de builds exitosos antiguos en Unity Cloud Build
+        env:
+          UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
+          ORG_ID:          ${{ secrets.ORG_ID }}
+          PROJECT_ID:      ${{ secrets.PROJECT_ID }}
+          BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
+        run: |
+          set -euo pipefail
+          echo "� Autenticando en Unity Cloud Build..."
+          # Basic Auth: usuario=API_KEY, contraseña vacía → base64("API_KEY:")
+          AUTH=$(printf '%s:' "$UNITY_API_TOKEN" | base64)
 
-    - name: Descargar build de Unity Cloud
-      env:
-        UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
-        ORG_ID:          ${{ secrets.ORG_ID }}
-        PROJECT_ID:      ${{ secrets.PROJECT_ID }}
-        BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
-      run: |
-        set -e
-        echo "� Autenticando en Unity Cloud Build..."
-        AUTH=$(echo -n "${UNITY_API_TOKEN}:" | base64)
+          echo "� Obteniendo lista de builds exitosos..."
+          builds=$(curl -s \
+            -H "Authorization: Basic $AUTH" \
+            "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds" \
+            | jq -r '.[] | select(.buildStatus=="success") | .build' \
+            | sort -n)
 
-        echo "� Listando builds con estado 'success'..."
-        builds_json=$(curl -s \
-          -H "Authorization: Basic $AUTH" \
-          "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds")
+          if [[ -z "$builds" ]]; then
+            echo "⚠️  No se encontraron builds exitosos para limpiar."
+          else
+            latest=$(echo "$builds" | tail -1)
+            echo "✔ Build exitoso más reciente: #$latest"
+            for num in $builds; do
+              if [[ "$num" -ne "$latest" ]]; then
+                echo "�  Borrando artefactos del build #$num..."
+                curl -s -X DELETE \
+                  -H "Authorization: Basic $AUTH" \
+                  "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds/${num}/artifacts"
+              fi
+            done
+          fi
 
-        latest=$(jq 'map(select(.buildStatus=="success") | .build) | max' <<<"$builds_json")
-        echo "✔ Build exitoso más reciente: #${latest}"
+      # ── 2) Descargar el último build exitoso ─────────────────────────────
+      - name: Descargar build de Unity Cloud
+        env:
+          UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
+          ORG_ID:          ${{ secrets.ORG_ID }}
+          PROJECT_ID:      ${{ secrets.PROJECT_ID }}
+          BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
+        run: |
+          set -euo pipefail
+          echo "� Autenticando en Unity Cloud Build..."
+          AUTH=$(printf '%s:' "$UNITY_API_TOKEN" | base64)
 
-        echo "� Extrayendo URL de descarga del build #${latest}..."
-        download_url=$(jq -r \
-          '.[] | select(.build=='"$latest"') | .links.download_primary.href' \
-          <<<"$builds_json")
+          echo "� Solicitando share link del último build exitoso..."
+          raw=$(curl -s \
+            -H "Authorization: Basic $AUTH" \
+            "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds/latest/share")
+          share_url=$(jq -r '.url // .shareid // empty' <<<"$raw")
 
-        if [[ -z "$download_url" || "$download_url" == "null" ]]; then
-          echo "❌ No se pudo extraer la URL de descarga para el build #${latest}."
-          exit 1
-        fi
+          if [[ -z "$share_url" ]]; then
+            echo "❌ ERROR: No se obtuvo URL de descarga:" >&2
+            echo "$raw" >&2
+            exit 1
+          fi
 
-        echo "✅ URL de descarga (build #${latest}):"
-        echo "$download_url"
+          # Si nos dan solo un shareId, construimos la URL pública:
+          if [[ "$share_url" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            share_url="https://storage.googleapis.com/unitycloud-build-user-svc-live-build/${ORG_ID}/${PROJECT_ID}/${BUILD_TARGET}-${latest}/${BUILD_TARGET}.zip?shareId=${share_url}"
+          fi
 
-        echo "� Limpiando workspace local ./build/..."
-        rm -rf build/ servidor.zip
-        mkdir -p build
+          echo "✅ URL de descarga: $share_url"
+          echo "� Limpiando workspace local..."
+          rm -rf build/ servidor.zip
+          mkdir -p build
 
-        echo "⬇️ Descargando artefacto..."
-        curl -sL "$download_url" -o servidor.zip
+          echo "⬇️  Descargando artefacto..."
+          curl -sL "$share_url" -o servidor.zip
 
-        echo "�️ Descomprimiendo en ./build/..."
-        unzip -o servidor.zip -d build/
+          echo "� Descomprimiendo en ./build/..."
+          unzip -o servidor.zip -d build/
 
-    - name: Limpiar build anterior en el VPS
-      uses: appleboy/ssh-action@v1.0.0
-      with:
-        host:     ${{ secrets.SERVER_IP }}
-        username: ${{ secrets.SERVER_USER }}
-        key:      ${{ secrets.SSH_PRIVATE_KEY }}
-        script: |
-          echo "� Limpiando carpeta remota /home/${{ secrets.SERVER_USER }}/server..."
-          rm -rf /home/${{ secrets.SERVER_USER }}/server/*
+      # ── 3) Limpiar carpeta remota en el VPS ───────────────────────────────
+      - name: Limpiar build anterior en el VPS
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host:     ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key:      ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "� Limpiando carpeta /home/${{ secrets.SERVER_USER }}/server..."
+            rm -rf /home/${{ secrets.SERVER_USER }}/server/*
 
-    - name: Subir build al VPS
-      uses: appleboy/scp-action@v0.1.5
-      with:
-        host:     ${{ secrets.SERVER_IP }}
-        username: ${{ secrets.SERVER_USER }}
-        key:      ${{ secrets.SSH_PRIVATE_KEY }}
-        source:   "build/**"
-        target:   "/home/${{ secrets.SERVER_USER }}/server"
+      # ── 4) Subir el build nuevo al VPS ───────────────────────────────────
+      - name: Subir build al VPS
+        uses: appleboy/scp-action@v0.1.5
+        with:
+          host:     ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key:      ${{ secrets.SSH_PRIVATE_KEY }}
+          source:   "build/**"
+          target:   "/home/${{ secrets.SERVER_USER }}/server"
 
-    - name: Reiniciar servicio
-      uses: appleboy/ssh-action@v1.0.0
-      with:
-        host:     ${{ secrets.SERVER_IP }}
-        username: ${{ secrets.SERVER_USER }}
-        key:      ${{ secrets.SSH_PRIVATE_KEY }}
-        script: |
-          echo "� Reiniciando servicio en el VPS..."
-          sudo systemctl restart mygame-server
-          echo "✅ Servicio reiniciado."
+      # ── 5) Reiniciar el servicio remoto ───────────────────────────────────
+      - name: Reiniciar servicio
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host:     ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key:      ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "� Reiniciando servicio en el VPS..."
+            sudo systemctl restart mygame-server
+            echo "✅ Servicio reiniciado."
