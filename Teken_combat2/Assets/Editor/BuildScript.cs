@@ -2,14 +2,15 @@
 using UnityEditor;
 using UnityEditor.Build.Reporting;
 using UnityEngine;
+using UnityEditor.CloudBuild;     // <–– necesario
 using System;
-using System.Net;
 using System.IO;
 using System.Net;
+using System.Threading.Tasks;
 
 public class BuildScript
 {
-    // Método que Unity Cloud Build invocará en <<Post-Export method>>
+    // Unity Cloud Build invoca este método en "Post-Export Method"
     public static void PerformServerBuild()
     {
         // 1) Generar el build
@@ -21,45 +22,26 @@ public class BuildScript
             target = BuildTarget.StandaloneLinux64,
             options = BuildOptions.EnableHeadlessMode | BuildOptions.CompressWithLz4
         };
-        BuildReport report = BuildPipeline.BuildPlayer(opts);
-
-        bool success = report.summary.result == BuildResult.Succeeded;
-        if (success)
-        {
-            Debug.Log("✅ Build completado en: " + buildPath);
-        }
-        else
-        {
-            Debug.LogError("❌ Build falló");
-            // para que Cloud Build detecte el fallo:
+        var report = BuildPipeline.BuildPlayer(opts);
+        if (report.summary.result != BuildResult.Succeeded)
             throw new Exception("BuildScript: build server failed");
-        }
 
-        // 2) Si fue exitoso, disparar el dispatch a GitHub de forma síncrona
-        try
-        {
-            DispatchToGitHubSync();
-        }
-        catch (Exception ex)
-        {
-            Debug.LogError("Error al hacer dispatch a GitHub: " + ex);
-            // si quieres que falle el build en caso de dispatch fallido, descomenta:
-            // throw;
-        }
+        Debug.Log("✅ Build completado en: " + buildPath);
+
+        // 2) Dispatch a GitHub
+        DispatchToGitHubSync();
     }
 
-    // Método síncrono para enviar el repository_dispatch
-    
     static void DispatchToGitHubSync()
     {
-        var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+        // Esto recoge la variable que definiste en Unity Cloud Build → Environment Variables
+        string token = CloudBuildSettings.GetValue("GITHUB_TOKEN", null);
         if (string.IsNullOrEmpty(token))
-            throw new InvalidOperationException("GITHUB_TOKEN no está definido en el environment.");
+            throw new InvalidOperationException("GITHUB_TOKEN no está definido en las Environment Variables de Cloud Build.");
 
         const string owner = "PabloM03";
         const string repo  = "shadowSteelClash";
-        var url   = $"https://api.github.com/repos/{owner}/{repo}/dispatches";
-
+        var url = $"https://api.github.com/repos/{owner}/{repo}/dispatches";
         var payload = JsonUtility.ToJson(new { event_type = "unity-build-complete" });
 
         using (var client = new WebClient())
@@ -70,7 +52,7 @@ public class BuildScript
 
             try
             {
-                string response = client.UploadString(url, "POST", payload);
+                var response = client.UploadString(url, "POST", payload);
                 Debug.Log("� Dispatch enviado a GitHub correctamente. Response: " + response);
             }
             catch (WebException wex) when (wex.Response is HttpWebResponse resp)
@@ -80,7 +62,7 @@ public class BuildScript
                     body = sr.ReadToEnd();
 
                 Debug.LogError($"❌ Dispatch falló: HTTP {(int)resp.StatusCode} {resp.StatusCode}\n{body}");
-                throw;  // para que Unity Cloud Build marque error si lo deseas
+                throw;
             }
         }
     }
