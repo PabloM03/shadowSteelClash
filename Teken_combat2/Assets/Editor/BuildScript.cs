@@ -3,9 +3,7 @@ using UnityEditor;
 using UnityEditor.Build.Reporting;
 using UnityEngine;
 using System;
-using System.Net.Http;
-using System.Text;
-using System.Threading.Tasks;
+using System.Net;
 
 public class BuildScript
 {
@@ -25,54 +23,52 @@ public class BuildScript
 
         bool success = report.summary.result == BuildResult.Succeeded;
         if (success)
+        {
             Debug.Log("✅ Build completado en: " + buildPath);
-        else {
+        }
+        else
+        {
             Debug.LogError("❌ Build falló");
-            // Opcional: lanzar exception para que Cloud Build lo marque como failed
+            // para que Cloud Build detecte el fallo:
             throw new Exception("BuildScript: build server failed");
         }
 
-        // 2) Si fue exitoso, disparar el dispatch a GitHub
+        // 2) Si fue exitoso, disparar el dispatch a GitHub de forma síncrona
         try
         {
-            DispatchToGitHub().Wait();
+            DispatchToGitHubSync();
         }
         catch (Exception ex)
         {
             Debug.LogError("Error al hacer dispatch a GitHub: " + ex);
-            // Opcional: volver a fallar el build
-            throw;
+            // si quieres que falle el build en caso de dispatch fallido, descomenta:
+            // throw;
         }
     }
 
-    // Lanza un repository_dispatch usando HttpClient
-    static async Task DispatchToGitHub()
+    // Método síncrono para enviar el repository_dispatch
+    static void DispatchToGitHubSync()
     {
-        string token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+        var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
         if (string.IsNullOrEmpty(token))
             throw new InvalidOperationException("GITHUB_TOKEN no está definido en el environment.");
 
-        string owner = "PabloM03";
-        string repo  = "shadowSteelClash";
-        string url   = $"https://api.github.com/repos/{owner}/{repo}/dispatches";
+        const string owner = "PabloM03";
+        const string repo  = "shadowSteelClash";
+        var url   = $"https://api.github.com/repos/{owner}/{repo}/dispatches";
 
-        using (var client = new HttpClient())
+        // Payload JSON
+        var payload = JsonUtility.ToJson(new { event_type = "unity-build-complete" });
+
+        using (var client = new WebClient())
         {
-            client.DefaultRequestHeaders.Add("User-Agent", "UnityCloudBuild");
-            client.DefaultRequestHeaders.Add("Authorization", $"token {token}");
+            client.Headers.Add("User-Agent", "UnityCloudBuild");
+            client.Headers.Add("Authorization", $"token {token}");
+            client.Headers.Add("Content-Type", "application/json");
 
-            // Cuerpo del dispatch
-            var payload = new { event_type = "unity-build-complete" };
-            string json = JsonUtility.ToJson(payload);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-            var res = await client.PostAsync(url, content);
-            if (!res.IsSuccessStatusCode)
-            {
-                string body = await res.Content.ReadAsStringAsync();
-                throw new Exception($"Dispatch falló ({(int)res.StatusCode}): {body}");
-            }
-            Debug.Log("�️ Dispatch enviado a GitHub correctamente.");
+            // Este UploadString es bloqueante y no provoca dead-lock en Unity
+            string response = client.UploadString(url, "POST", payload);
+            Debug.Log("� Dispatch enviado a GitHub correctamente. Response: " + response);
         }
     }
 }
