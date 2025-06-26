@@ -17,11 +17,11 @@ jobs:
         BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
       run: |
         set -e
-        echo "�️ Eliminando artefactos de builds antiguos en Unity Cloud Build..."
-        AUTH=$(echo -n "apikey:${UNITY_API_TOKEN}" | base64)
+        echo "� Eliminando artefactos de builds antiguos en Unity Cloud Build..."
+        AUTH=$(echo -n "${UNITY_API_TOKEN}:" | base64)
         curl -s -X DELETE \
           -H "Authorization: Basic $AUTH" \
-          "https://build-api.cloud.unity3d.com/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/buildtargets/$BUILD_TARGET/builds/artifacts"
+          "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds/artifacts"
 
     - name: Descargar build de Unity Cloud
       env:
@@ -32,27 +32,37 @@ jobs:
       run: |
         set -e
         echo "� Autenticando en Unity Cloud Build..."
-        UNITY_AUTH=$(echo -n "apikey:${UNITY_API_TOKEN}" | base64)
+        AUTH=$(echo -n "${UNITY_API_TOKEN}:" | base64)
 
-        echo "� Solicitando share URL del último build..."
-        raw=$(curl -s -H "Authorization: Basic $UNITY_AUTH" \
-          "https://build-api.cloud.unity3d.com/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/buildtargets/$BUILD_TARGET/builds/latest/share")
-        share_url=$(jq -r .shareUrl <<<"$raw")
-        if [[ -z "$share_url" || "$share_url" == "null" ]]; then
-          echo "❌ ERROR: shareUrl no encontrado en la respuesta:" >&2
-          echo "$raw" >&2
+        echo "� Listando builds con estado 'success'..."
+        builds_json=$(curl -s \
+          -H "Authorization: Basic $AUTH" \
+          "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds")
+
+        latest=$(jq 'map(select(.buildStatus=="success") | .build) | max' <<<"$builds_json")
+        echo "✔ Build exitoso más reciente: #${latest}"
+
+        echo "� Extrayendo URL de descarga del build #${latest}..."
+        download_url=$(jq -r \
+          '.[] | select(.build=='"$latest"') | .links.download_primary.href' \
+          <<<"$builds_json")
+
+        if [[ -z "$download_url" || "$download_url" == "null" ]]; then
+          echo "❌ No se pudo extraer la URL de descarga para el build #${latest}."
           exit 1
         fi
 
-        echo "✅ shareUrl obtenido: $share_url"
+        echo "✅ URL de descarga (build #${latest}):"
+        echo "$download_url"
+
         echo "� Limpiando workspace local ./build/..."
         rm -rf build/ servidor.zip
         mkdir -p build
 
-        echo "� Descargando artefacto..."
-        curl -sL "$share_url" -o servidor.zip
+        echo "⬇️ Descargando artefacto..."
+        curl -sL "$download_url" -o servidor.zip
 
-        echo "�️ Descomprimiendo en ./build/"
+        echo "�️ Descomprimiendo en ./build/..."
         unzip -o servidor.zip -d build/
 
     - name: Limpiar build anterior en el VPS
