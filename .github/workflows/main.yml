@@ -9,6 +9,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: Limpiar artefactos antiguos en Unity Cloud Build
+      env:
+        UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
+        ORG_ID:          ${{ secrets.ORG_ID }}
+        PROJECT_ID:      ${{ secrets.PROJECT_ID }}
+        BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
+      run: |
+        set -e
+        echo "�️ Eliminando artefactos de builds antiguos en Unity Cloud Build..."
+        AUTH=$(echo -n "apikey:${UNITY_API_TOKEN}" | base64)
+        curl -s -X DELETE \
+          -H "Authorization: Basic $AUTH" \
+          "https://build-api.cloud.unity3d.com/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/buildtargets/$BUILD_TARGET/builds/artifacts"
+
     - name: Descargar build de Unity Cloud
       env:
         UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
@@ -31,7 +45,7 @@ jobs:
         fi
 
         echo "✅ shareUrl obtenido: $share_url"
-        echo "�️ Limpiando workspace local ./build/..."
+        echo "� Limpiando workspace local ./build/..."
         rm -rf build/ servidor.zip
         mkdir -p build
 
