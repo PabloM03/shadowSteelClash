@@ -1,5 +1,6 @@
 name: Deploy Unity Server (auto desde Cloud Build)
-
+# Despliega automáticamente el último build exitoso de Unity Cloud Build
+# en un servidor Windows mediante WinRM.
 on:
   push:
     branches: [ main ]
