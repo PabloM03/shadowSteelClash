@@ -18,76 +18,50 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Preparar runner (instalar jq y 7zip)
+      - name: Preparar runner (instalar jq)
         shell: powershell
-        run: choco install -y jq 7zip
+        run: choco install -y jq
 
       - name: Limpiar artifacts antiguos
         shell: powershell
         run: |
-          # Forzar TLS1.2
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-          # Usar token tal cual
-          $authToken = $env:UNITY_API_TOKEN
-
-          # Llamada de prueba
-          Invoke-RestMethod `
-            -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID" `
-            -Headers @{ Authorization = "Basic $authToken" } `
-            -ErrorAction Stop | Out-Null
-
-          # Listar builds exitosos
+          $auth = $env:UNITY_API_TOKEN
+          # Listar y borrar antiguos (igual que antes)...
           $all = Invoke-RestMethod `
             -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds" `
-            -Headers @{ Authorization = "Basic $authToken" }
+            -Headers @{ Authorization = "Basic $auth" }
 
           $builds = $all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Sort-Object
-          if (-not $builds) {
-            Write-Warning "⚠️ No hay builds exitosos para limpiar."
-            exit 0
-          }
+          if (-not $builds) { exit 0 }
           $latest = $builds[-1]
-
           foreach ($b in $builds) {
             if ($b -ne $latest) {
-              $url = "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds/$b/artifacts"
-              Invoke-RestMethod -Uri $url -Method Delete -Headers @{ Authorization = "Basic $authToken" }
+              Invoke-RestMethod `
+                -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds/$b/artifacts" `
+                -Method Delete -Headers @{ Authorization = "Basic $auth" }
             }
           }
 
-      - name: Descargar y descomprimir último build
+      - name: Obtener URL del último build
+        id: get_url
         shell: powershell
         run: |
-          # Forzar TLS1.2
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          $authToken = $env:UNITY_API_TOKEN
-
-          # 1) Averiguar URL del último build exitoso
+          $auth = $env:UNITY_API_TOKEN
           $all = Invoke-RestMethod `
             -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds" `
-            -Headers @{ Authorization = "Basic $authToken" }
+            -Headers @{ Authorization = "Basic $auth" }
           $latest = ($all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Measure-Object -Maximum).Maximum
           $dl = ($all | Where-Object { $_.buildStatus -eq "success" -and $_.build -eq $latest }).links.download_primary.href
+          echo "download_url=$dl" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
 
-          # 2) Limpiar y crear carpeta
-          Remove-Item -Recurse -Force build, servidor.zip -ErrorAction Ignore
-          New-Item -ItemType Directory -Path build | Out-Null
-
-          # 3) Descargar con BITS (más rápido/resumible)
-          Write-Host "⬇️  Descargando build #$latest..."
-          Start-BitsTransfer -Source $dl -Destination servidor.zip
-
-          # 4) Descomprimir con 7zip (installado via Chocolatey)
-          Write-Host "�  Descomprimiendo con 7z..."
-          & 7z x servidor.zip "-obuild" -y
-
-          Write-Host "✅ Descarga y descompresión completadas."
-
-      - name: Desplegar y reiniciar servicio en Windows remoto
+      - name: Desplegar y reiniciar en Windows remoto
         uses: im-open/remote-windows-machine-script-execution@v2.0.3
         with:
           server:                   ${{ secrets.SERVER_IP }}
           service-account-id:       ${{ secrets.SERVER_USER }}
           service-account-password: ${{ secrets.SERVER_PASSWORD }}
           script-path:              .github/scripts/deploy.ps1
+        env:
+          DOWNLOAD_URL: ${{ steps.get_url.outputs.download_url }}
