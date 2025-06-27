@@ -59,25 +59,30 @@ jobs:
       - name: Descargar y descomprimir último build
         shell: powershell
         run: |
+          # Forzar TLS1.2
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           $authToken = $env:UNITY_API_TOKEN
 
-          # Obtener número del build más reciente
+          # 1) Averiguar URL del último build exitoso
           $all = Invoke-RestMethod `
             -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds" `
             -Headers @{ Authorization = "Basic $authToken" }
           $latest = ($all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Measure-Object -Maximum).Maximum
-
-          # Extraer URL de descarga
           $dl = ($all | Where-Object { $_.buildStatus -eq "success" -and $_.build -eq $latest }).links.download_primary.href
 
-          # Preparar workspace
+          # 2) Limpiar y crear carpeta
           Remove-Item -Recurse -Force build, servidor.zip -ErrorAction Ignore
           New-Item -ItemType Directory -Path build | Out-Null
 
-          # Descargar y descomprimir
-          Invoke-WebRequest -Uri $dl -OutFile servidor.zip
-          Expand-Archive -Path servidor.zip -DestinationPath build -Force
+          # 3) Descargar con BITS (más rápido/resumible)
+          Write-Host "⬇️  Descargando build #$latest..."
+          Start-BitsTransfer -Source $dl -Destination servidor.zip
+
+          # 4) Descomprimir con 7zip (installado via Chocolatey)
+          Write-Host "�  Descomprimiendo con 7z..."
+          & 7z x servidor.zip "-obuild" -y
+
+          Write-Host "✅ Descarga y descompresión completadas."
 
       - name: Desplegar y reiniciar servicio en Windows remoto
         uses: im-open/remote-windows-machine-script-execution@v2.0.3
