@@ -15,77 +15,69 @@ jobs:
       BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+    # 0) Código
+    - uses: actions/checkout@v3
 
-      - name: Preparar runner (instalar jq)
-        shell: powershell
-        run: choco install -y jq
+    # 1) utilidades
+    - name: Instalar jq
+      shell: powershell
+      run: choco install -y jq
 
-      - name: Limpiar artifacts antiguos
-        shell: powershell
-        run: |
-          # Forzar TLS1.2
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    # 2) Limpia artifacts viejos
+    - name: Limpiar artifacts antiguos
+      shell: powershell
+      run: |
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $auth = $env:UNITY_API_TOKEN
+        $url  = "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds"
+        $all  = Invoke-RestMethod -Uri $url -Headers @{ Authorization = "Basic $auth" }
 
-          $auth = $env:UNITY_API_TOKEN
-          $all = Invoke-RestMethod `
-            -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds" `
-            -Headers @{ Authorization = "Basic $auth" }
-
-          $builds = $all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Sort-Object
-          if (-not $builds) {
-            Write-Warning "⚠️ No hay builds exitosos para limpiar."
-            exit 0
-          }
-
+        $builds = $all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Sort-Object
+        if ($builds) {
           $latest = $builds[-1]
           foreach ($b in $builds) {
             if ($b -ne $latest) {
-              Invoke-RestMethod `
-                -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds/$b/artifacts" `
-                -Method Delete -Headers @{ Authorization = "Basic $auth" }
+              Invoke-RestMethod -Method Delete `
+                -Uri "$url/$b/artifacts" `
+                -Headers @{ Authorization = "Basic $auth" }
             }
           }
+        } else {
+          Write-Host "⚠️  No hay builds 'success' todavía; no se limpian artifacts."
+        }
 
-      - name: Obtener URL del último build
-        id: get_url
-        shell: powershell
-        run: |
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    # 3) Obtener URL del último build SUCCESS
+    - name: Obtener URL del último build
+      id: get_url
+      shell: powershell
+      run: |
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $auth = $env:UNITY_API_TOKEN
+        $url  = "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds"
+        $all  = Invoke-RestMethod -Uri $url -Headers @{ Authorization = "Basic $auth" }
 
-          $auth = $env:UNITY_API_TOKEN
-          $all = Invoke-RestMethod `
-            -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds" `
-            -Headers @{ Authorization = "Basic $auth" }
+        $latest = ($all |
+          Where-Object { $_.buildStatus -eq "success" } |
+          Select-Object -ExpandProperty build |
+          Measure-Object -Maximum).Maximum
 
-          $latest = ($all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Measure-Object -Maximum).Maximum
-          $dl = ($all | Where-Object { $_.buildStatus -eq "success" -and $_.build -eq $latest }).links.download_primary.href
+        if (-not $latest) {
+          Write-Host "::warning::No existe ningún build con estado 'success'. Se cancela el job."
+          Exit 0
+        }
 
-          Write-Output "download_url=$dl" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
-      - name: Obtener URL del último build
-        id: get_url
-        shell: powershell
-        run: |
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $dl = ($all | Where-Object { $_.buildStatus -eq "success" -and $_.build -eq $latest }).links.download_primary.href
+        Write-Host "� Enlace del build #$latest: $dl"
+        "download_url=$dl" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
 
-          $auth = $env:UNITY_API_TOKEN
-          $all = Invoke-RestMethod `
-            -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds" `
-            -Headers @{ Authorization = "Basic $auth" }
-
-          $latest = ($all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Measure-Object -Maximum).Maximum
-          $dl = ($all | Where-Object { $_.buildStatus -eq "success" -and $_.build -eq $latest }).links.download_primary.href
-
-          Write-Host "� Enlace del último build: $dl"
-          Write-Output "download_url=$dl" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
-
-      - name: Desplegar y reiniciar en Windows remoto
-        uses: im-open/remote-windows-machine-script-execution@v2.0.3
-        with:
-          server:                   ${{ secrets.SERVER_IP }}
-          service-account-id:       ${{ secrets.SERVER_USER }}
-          service-account-password: ${{ secrets.SERVER_PASSWORD }}
-          script-path:              .github/scripts/deploy.ps1
-          script-arguments:         "\"${{ steps.get_url.outputs.download_url }}\""
-          split-script-arguments:   false
+    # 4) Ejecutar script remoto por WinRM
+    - name: Desplegar y reiniciar en Windows remoto
+      uses: im-open/remote-windows-machine-script-execution@v2.0.3
+      with:
+        server:                   ${{ secrets.SERVER_IP }}
+        service-account-id:       ${{ secrets.SERVER_USER }}
+        service-account-password: ${{ secrets.SERVER_PASSWORD }}
+        script-path:              .github/scripts/deploy.ps1
+        # entrecomillado doble escapado para que llegue como 1 solo argumento
+        script-arguments:         "\"${{ steps.get_url.outputs.download_url }}\""
+        split-script-arguments:   false
