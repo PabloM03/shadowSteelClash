@@ -15,69 +15,57 @@ jobs:
       BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
 
     steps:
-    # 0) Código
+    # 0) Checkout
     - uses: actions/checkout@v3
 
-    # 1) utilidades
-    - name: Instalar jq
+    # 1) Instala jq (lo usa el paso bash)
+    - name: Install jq
       shell: powershell
       run: choco install -y jq
 
-    # 2) Limpia artifacts viejos
-    - name: Limpiar artifacts antiguos
+    # 2) Limpia artifacts de builds anteriores
+    - name: Clean old artifacts
       shell: powershell
       run: |
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $auth = $env:UNITY_API_TOKEN
-        $url  = "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds"
-        $all  = Invoke-RestMethod -Uri $url -Headers @{ Authorization = "Basic $auth" }
+        $api  = "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds"
+        $all  = Invoke-RestMethod -Uri $api -Headers @{ Authorization = "Basic $auth" }
 
-        $builds = $all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Sort-Object
-        if ($builds) {
-          $latest = $builds[-1]
-          foreach ($b in $builds) {
+        $succ = $all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -Expand build | Sort-Object
+        if ($succ) {
+          $latest = $succ[-1]
+          foreach ($b in $succ) {
             if ($b -ne $latest) {
-              Invoke-RestMethod -Method Delete `
-                -Uri "$url/$b/artifacts" `
-                -Headers @{ Authorization = "Basic $auth" }
+              Invoke-RestMethod -Method Delete -Headers @{ Authorization = "Basic $auth" } `
+                -Uri "$api/$b/artifacts"
             }
           }
-        } else {
-          Write-Host "⚠️  No hay builds 'success' todavía; no se limpian artifacts."
         }
 
-    # 3) Obtener URL del último build SUCCESS
-    - name: Obtener URL del último build
+    # 3) Obtiene la URL del último build exitoso (bash + jq)
+    - name: Get last build URL
       id: get_url
-      shell: powershell
+      shell: bash
       run: |
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $auth = $env:UNITY_API_TOKEN
-        $url  = "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds"
-        $all  = Invoke-RestMethod -Uri $url -Headers @{ Authorization = "Basic $auth" }
+        set -euo pipefail
+        API="https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds"
+        JSON=$(curl -s -H "Authorization: Basic ${UNITY_API_TOKEN}" "${API}")
+        LATEST=$(echo "$JSON" | jq 'map(select(.buildStatus=="success")) | max_by(.build) | .build')
+        if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+          echo "::warning::No hay builds con status success. Cancelando job."
+          exit 0
+        fi
+        DL=$(echo "$JSON" | jq -r --arg num "$LATEST" '.[] | select(.buildStatus=="success" and (.build|tostring)==$num) | .links.download_primary.href')
+        echo "download_url=$DL" >> "$GITHUB_OUTPUT"
 
-        $latest = ($all |
-          Where-Object { $_.buildStatus -eq "success" } |
-          Select-Object -ExpandProperty build |
-          Measure-Object -Maximum).Maximum
-
-        if (-not $latest) {
-          Write-Host "::warning::No existe ningún build con estado 'success'. Se cancela el job."
-          Exit 0
-        }
-
-        $dl = ($all | Where-Object { $_.buildStatus -eq "success" -and $_.build -eq $latest }).links.download_primary.href
-        Write-Host "� Enlace del build #$latest: $dl"
-        "download_url=$dl" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
-
-    # 4) Ejecutar script remoto por WinRM
-    - name: Desplegar y reiniciar en Windows remoto
+    # 4) Ejecuta el script de despliegue en el servidor Windows
+    - name: Deploy & restart on remote Windows
       uses: im-open/remote-windows-machine-script-execution@v2.0.3
       with:
         server:                   ${{ secrets.SERVER_IP }}
         service-account-id:       ${{ secrets.SERVER_USER }}
         service-account-password: ${{ secrets.SERVER_PASSWORD }}
         script-path:              .github/scripts/deploy.ps1
-        # entrecomillado doble escapado para que llegue como 1 solo argumento
         script-arguments:         "\"${{ steps.get_url.outputs.download_url }}\""
         split-script-arguments:   false
