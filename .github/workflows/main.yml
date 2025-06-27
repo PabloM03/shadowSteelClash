@@ -18,19 +18,18 @@ jobs:
     # 0) Checkout
     - uses: actions/checkout@v3
 
-    # 1) Asegurar jq (si ya está, choco reporta 0)
+    # 1) Asegurar jq
     - name: Ensure jq
       shell: powershell
       run: choco install jq -y --no-progress
 
-    # 2) Limpiar artifacts antiguos y dejar solo el último éxito
+    # 2) Limpiar artifacts antiguos
     - name: Clean Cloud-Build artifacts
       shell: powershell
       run: |
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $auth = $env:UNITY_API_TOKEN
         $api  = "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds"
-        $all  = Invoke-RestMethod -Uri $api -Headers @{ Authorization = "Basic $auth" }
+        $all  = Invoke-RestMethod -Uri $api -Headers @{ Authorization = "Basic $env:UNITY_API_TOKEN" }
 
         $succ = $all | Where-Object { $_.buildStatus -eq "success" } |
                 ForEach-Object { $_.build } | Sort-Object
@@ -38,12 +37,12 @@ jobs:
           $latest = $succ[-1]
           foreach ($b in $succ) {
             if ($b -ne $latest) {
-              Invoke-RestMethod -Method Delete -Uri "$api/$b/artifacts" -Headers @{ Authorization = "Basic $auth" }
+              Invoke-RestMethod -Method Delete -Uri "$api/$b/artifacts" -Headers @{ Authorization = "Basic $env:UNITY_API_TOKEN" }
             }
           }
         }
 
-    # 3) Obtener URL del último build SUCCESS (bash + jq)
+    # 3) Obtener URL del último éxito
     - name: Get last build URL
       id: url
       shell: bash
@@ -57,14 +56,12 @@ jobs:
         API="https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds"
         JSON=$(curl -s -H "Authorization: Basic ${UNITY_API_TOKEN}" "$API")
         LAST=$(echo "$JSON" | jq 'map(select(.buildStatus=="success")) | max_by(.build) | .build')
-        if [[ -z "$LAST" || "$LAST" == "null" ]]; then
-          echo "::warning::No build success yet."; exit 0
-        fi
+        [ "$LAST" = "null" ] && { echo "::warning::No successful build"; exit 0; }
         DL=$(echo "$JSON" | jq -r --arg n "$LAST" '.[] | select(.buildStatus=="success" and (.build|tostring)==$n) | .links.download_primary.href')
         echo "download_url=$DL" >> "$GITHUB_OUTPUT"
         echo "Build #$LAST → $DL"
 
-    # 4) Ejecutar deploy.ps1 en el servidor via WinRM
+    # 4) Ejecutar deploy.ps1 vía WinRM (sin argumentos, usando env var)
     - name: Deploy on Windows
       uses: im-open/remote-windows-machine-script-execution@v2.0.3
       with:
@@ -72,7 +69,6 @@ jobs:
         service-account-id:       ${{ secrets.SERVER_USER }}
         service-account-password: ${{ secrets.SERVER_PASSWORD }}
         script-path:              .github/scripts/deploy.ps1
-        script-arguments:         ${{ steps.url.outputs.download_url }}
-        should-split:             false
+        script-arguments:         ""          # ← vacío, así NO se añade -split
       env:
         DOWNLOAD_URL: ${{ steps.url.outputs.download_url }}
