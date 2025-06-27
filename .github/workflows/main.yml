@@ -15,36 +15,29 @@ jobs:
       BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
 
     steps:
-    # 0) Checkout código
+    # 0) Código fuente
     - uses: actions/checkout@v3
 
-    # 1) Asegurar jq para el paso bash
+    # 1) jq para el paso bash
     - name: Ensure jq
-      shell: powershell
       run: choco install jq -y --no-progress
+      shell: powershell
 
-    # 2) Mantener sólo el último build SUCCESS en Cloud Build
+    # 2) Limpiar artefactos antiguos
     - name: Clean Cloud-Build artifacts
       shell: powershell
       run: |
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $api  = "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds"
         $all  = Invoke-RestMethod -Uri $api -Headers @{Authorization="Basic $env:UNITY_API_TOKEN"}
-
-        $succ = $all |
-                Where-Object { $_.buildStatus -eq "success" } |
-                ForEach-Object { $_.build } |
-                Sort-Object
+        $succ = $all | Where-Object buildStatus -eq success | ForEach-Object build | Sort-Object
         if ($succ) {
           $latest = $succ[-1]
-          foreach ($b in $succ) {
-            if ($b -ne $latest) {
-              Invoke-RestMethod -Method Delete -Uri "$api/$b/artifacts" -Headers @{Authorization="Basic $env:UNITY_API_TOKEN"}
-            }
-          }
+          $succ | Where-Object {$_ -ne $latest} |
+            ForEach-Object {Invoke-RestMethod -Method Delete -Uri "$api/$_/artifacts" -Headers @{Authorization="Basic $env:UNITY_API_TOKEN"}}
         }
 
-    # 3) Obtener la URL del último build SUCCESS
+    # 3) Obtener URL del último build correcto
     - name: Get last build URL
       id: url
       shell: bash
@@ -60,10 +53,10 @@ jobs:
         LAST=$(echo "$JSON" | jq 'map(select(.buildStatus=="success")) | max_by(.build) | .build')
         [ "$LAST" = "null" ] && { echo "::warning::No successful build."; exit 0; }
         DL=$(echo "$JSON" | jq -r --arg n "$LAST" '.[] | select(.buildStatus=="success" and (.build|tostring)==$n) | .links.download_primary.href')
-        echo "download_url=$DL" >> "$GITHUB_OUTPUT"
+        echo "download_url=$DL" >>"$GITHUB_OUTPUT"
         echo "✔ build #$LAST → $DL"
 
-    # 4) Despliegue remoto con PowerShell puro (evita el bug de -split)
+    # 4) Copiar deploy.ps1 y ejecutarlo por WinRM
     - name: Deploy & restart on Windows via WinRM
       shell: powershell
       env:
@@ -72,27 +65,17 @@ jobs:
         SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
         DOWNLOAD_URL:    ${{ steps.url.outputs.download_url }}
       run: |
-        # ---------- Credenciales ----------
+        # -- Credenciales
         $sec  = ConvertTo-SecureString $env:SERVER_PASSWORD -AsPlainText -Force
-        $cred = New-Object PSCredential ($env:SERVER_USER, $sec)
+        $cred = [PSCredential]::new($env:SERVER_USER, $sec)
 
-        # ---------- Sesión WinRM ----------
-        $opt  = New-PSSessionOption -SkipCNCheck -SkipCACheck   # certificado autofirmado
-        $sess = New-PSSession -ComputerName $env:SERVER_IP `
-                              -Credential $cred `
-                              -Authentication Basic `
-                              -UseSSL `
-                              -SessionOption $opt
+        # -- Sesión WinRM (HTTPS 5986, cert autofirmado)
+        $opt  = New-PSSessionOption -SkipCNCheck -SkipCACheck
+        $sess = New-PSSession -ComputerName $env:SERVER_IP -Credential $cred -Authentication Basic -UseSSL -SessionOption $opt
 
-        # ---------- Copiar y ejecutar ----------
-        Copy-Item -ToSession $sess `
-                  -Path .github\scripts\deploy.ps1 `
-                  -Destination C:\Deploy\deploy.ps1 `
-                  -Force
+        # -- Copiar y lanzar script
+        Copy-Item .github\scripts\deploy.ps1 -Destination C:\Deploy\deploy.ps1 -ToSession $sess -Force
+        Invoke-Command -Session $sess -FilePath C:\Deploy\deploy.ps1 -ArgumentList $env:DOWNLOAD_URL
 
-        Invoke-Command -Session $sess `
-                       -FilePath   C:\Deploy\deploy.ps1 `
-                       -ArgumentList $env:DOWNLOAD_URL
-
-        # ---------- Cerrar ----------
+        # -- Cerrar
         Remove-PSSession $sess
