@@ -8,7 +8,6 @@ jobs:
   deploy-server:
     runs-on: windows-latest
 
-    # Variables de entorno disponibles en todos los steps
     env:
       UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
       ORG_ID:          ${{ secrets.ORG_ID }}
@@ -19,17 +18,13 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      # 0) Instalar jq y herramientas de descompresión
       - name: Preparar runner (instalar jq y 7zip)
-        run: |
-          choco install -y jq 7zip
+        run: choco install -y jq 7zip
         shell: powershell
 
-      # 1) Limpiar artifacts de builds exitosos antiguos
       - name: Limpiar artifacts antiguos
         shell: powershell
         run: |
-          # codificar token para Basic Auth
           $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$env:UNITY_API_TOKEN:"))
           Write-Host "� Listando builds exitosos..."
           $all = Invoke-RestMethod `
@@ -53,7 +48,6 @@ jobs:
             }
           }
 
-      # 2) Descargar el último build exitoso
       - name: Descargar último build exitoso
         shell: powershell
         run: |
@@ -76,18 +70,15 @@ jobs:
           Remove-Item -Path build, servidor.zip -Recurse -Force -ErrorAction Ignore
           New-Item -ItemType Directory -Path build | Out-Null
 
-          # Forzar TLS1.2 si es necesario
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           Invoke-WebRequest -Uri $downloadUrl -OutFile servidor.zip
 
-          # Descomprimir el zip
           Expand-Archive -Path servidor.zip -DestinationPath build -Force
 
-      # 3) Desplegar en el servidor Windows remoto
       - name: Desplegar y reiniciar servicio en Windows remoto
         uses: im-open/remote-windows-machine-script-execution@v1.1.0
         with:
-          server:                  ${{ secrets.SERVER_IP }}
-          service-account-id:      ${{ secrets.SERVER_USER }}
-          service-account-password:${{ secrets.SERVER_PASSWORD }}
-          script-path:             .github/scripts/deploy.ps1
+          server:                   ${{ secrets.SERVER_IP }}
+          service-account-id:       ${{ secrets.SERVER_USER }}
+          service-account-password: ${{ secrets.SERVER_PASSWORD }}
+          script-path:              .github/scripts/deploy.ps1
