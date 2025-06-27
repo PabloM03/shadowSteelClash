@@ -15,16 +15,13 @@ jobs:
       BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
 
     steps:
-      # 0) Clonar el repositorio
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v3                      # 0) checkout
 
-      # 1) Instalar jq para bash
-      - name: Ensure jq
+      - name: Ensure jq                                # 1) jq
         shell: powershell
         run: choco install jq -y --no-progress
 
-      # 2) Dejar solo el último build SUCCESS en Cloud Build
-      - name: Clean Cloud-Build artifacts
+      - name: Clean Cloud-Build artifacts              # 2) borrar builds viejos
         shell: powershell
         run: |
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -33,14 +30,12 @@ jobs:
           $succ = $all | Where-Object buildStatus -eq success | ForEach-Object build | Sort-Object
           if ($succ) {
             $latest = $succ[-1]
-            $succ | Where-Object { $_ -ne $latest } |
-              ForEach-Object {
-                Invoke-RestMethod -Method Delete -Uri "$api/$_/artifacts" -Headers @{Authorization="Basic $env:UNITY_API_TOKEN"}
-              }
+            $succ | Where-Object { $_ -ne $latest } | ForEach-Object {
+              Invoke-RestMethod -Method Delete -Uri "$api/$_/artifacts" -Headers @{Authorization="Basic $env:UNITY_API_TOKEN"}
+            }
           }
 
-      # 3) Obtener la URL del último build SUCCESS
-      - name: Get last build URL
+      - name: Get last build URL                       # 3) obtener URL
         id: url
         shell: bash
         env:
@@ -58,43 +53,45 @@ jobs:
           echo "download_url=$DL" >>"$GITHUB_OUTPUT"
           echo "Build #$LAST -> $DL"
 
-      # 4) Copiar y ejecutar deploy.ps1 en la VM mediante WinRM HTTPS
-      - name: Deploy via WinRM
+      - name: Deploy via WinRM (verbose)               # 4) copia + deploy
         shell: powershell
         env:
-          SERVER_IP:       ${{ secrets.SERVER_IP }}       # Ej.: 155.248.239.85
-          SERVER_USER:     ${{ secrets.SERVER_USER }}     # Ej.: opc
+          SERVER_IP:       ${{ secrets.SERVER_IP }}     # 155.248.239.85
+          SERVER_USER:     ${{ secrets.SERVER_USER }}   # opc
           SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
           DOWNLOAD_URL:    ${{ steps.url.outputs.download_url }}
         run: |
+          #===== Verbose y errores =========================
+          $VerbosePreference = 'Continue'
           $ErrorActionPreference = 'Stop'
 
-          # Credenciales
+          #===== Credenciales ==============================
           $sec  = ConvertTo-SecureString $env:SERVER_PASSWORD -AsPlainText -Force
           $cred = New-Object pscredential ($env:SERVER_USER, $sec)
 
-          # Crear sesión WinRM
+          #===== Sesion WinRM ==============================
           $opt  = New-PSSessionOption -SkipCNCheck -SkipCACheck
-          Write-Host "Opening WinRM at $env:SERVER_IP:5986 ..."
+          Write-Host ">> Opening WinRM at $env:SERVER_IP:5986 ..."
           $sess = New-PSSession -ComputerName $env:SERVER_IP -Port 5986 -UseSSL `
                                 -Authentication Basic -Credential $cred `
                                 -SessionOption $opt
 
-          # Rutas
-          $remoteHome = Invoke-Command -Session $sess -ScriptBlock { $env:USERPROFILE }
-          $remoteDir  = Join-Path $remoteHome 'Desktop\Deploy'
-          $remoteScript = Join-Path $remoteDir 'deploy.ps1'
+          #===== Rutas remotas =============================
+          $remoteHome   = Invoke-Command -Session $sess -ScriptBlock { $env:USERPROFILE }
+          $remoteDir    = Join-Path $remoteHome 'Desktop\Deploy'
+          $remoteScript = Join-Path $remoteDir  'deploy.ps1'
           $localScript  = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\deploy.ps1'
 
           Write-Host "REMOTE USERPROFILE : $remoteHome"
           Write-Host "Destination folder  : $remoteDir"
-          Write-Host "Local script path   : $localScript"
+          Write-Host "Remote script       : $remoteScript"
+          Write-Host "Local script        : $localScript"
 
           if (-not (Test-Path $localScript)) {
             throw "Local script not found: $localScript"
           }
 
-          # Crear carpeta si falta
+          #===== Crear carpeta si falta ====================
           Invoke-Command -Session $sess -ScriptBlock {
             param($d)
             if (-not (Test-Path $d)) {
@@ -103,23 +100,28 @@ jobs:
             }
           } -ArgumentList $remoteDir
 
-          # Copiar el script (destino = carpeta)
-          Write-Host "Copying deploy.ps1 into $remoteDir ..."
-          Copy-Item -Path $localScript -Destination $remoteDir -ToSession $sess -Force -Verbose -ErrorAction Stop
+          #===== Copiar ====================================
+          Write-Host ">> Copying deploy.ps1 into $remoteDir ..."
+          Copy-Item -Path $localScript -Destination $remoteDir -ToSession $sess -Force -Verbose
 
-          # Listar contenido
+          #===== Listar y verificar ========================
           Invoke-Command -Session $sess -ScriptBlock {
-            param($d) Write-Host 'Remote dir content:'; Get-ChildItem $d
+            param($d)
+            Write-Host 'Remote dir content:'; Get-ChildItem $d
           } -ArgumentList $remoteDir
 
-          # Verificar copy
           $exists = Invoke-Command -Session $sess -ScriptBlock { param($p) Test-Path $p } -ArgumentList $remoteScript
           if (-not $exists) { throw "Copy failed: $remoteScript not found." }
 
-          # Ejecutar deploy.ps1
-          Write-Host "Running deploy.ps1 with URL = $env:DOWNLOAD_URL"
-          Invoke-Command -Session $sess -FilePath $remoteScript -ArgumentList $env:DOWNLOAD_URL
+          #===== Ejecutar script remoto ====================
+          Write-Host ">> Running deploy.ps1 with URL:"
+          Write-Host $env:DOWNLOAD_URL
+          Invoke-Command -Session $sess -ScriptBlock {
+            param($script,$url)
+            Write-Host "Inside remote session. Executing $script ..."
+            & $script $url
+          } -ArgumentList $remoteScript,$env:DOWNLOAD_URL
 
-          # Cerrar
+          #===== Cerrar ====================================
           Remove-PSSession $sess
           Write-Host "WinRM session closed."
