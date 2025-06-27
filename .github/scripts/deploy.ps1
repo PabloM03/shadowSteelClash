@@ -1,22 +1,21 @@
-param(
-    [string]$DOWNLOAD_URL
-)
-
-# Si llegó como argumento úsalo; si no, toma la env-var
-$dl = if ($DOWNLOAD_URL) { $DOWNLOAD_URL } else { $env:DOWNLOAD_URL }
+param([string]$DOWNLOAD_URL)
 
 $target  = 'C:\GameServer'
-$tempZip = "$target\build.zip"
+$zipPath = "$target\build.zip"
 
-Remove-Item -Path "$target\*" -Recurse -Force -ErrorAction SilentlyContinue
+# Crear carpeta destino si no existe
+if (-not (Test-Path $target)) {
+    New-Item -ItemType Directory -Path $target -Force | Out-Null
+    Write-Host "Created $target"
+}
 
-Write-Host "⬇️  Downloading: $dl"
-Start-BitsTransfer -Source $dl -Destination $tempZip
+Write-Host "Downloading: $DOWNLOAD_URL"
+Start-BitsTransfer -Source $DOWNLOAD_URL -Destination $zipPath
 
-Write-Host "�  Extracting..."
-& 'C:\Program Files\7-Zip\7z.exe' x $tempZip "-o$target" -y
+Write-Host "Extracting..."
+& 'C:\Program Files\7-Zip\7z.exe' x $zipPath "-o$target" -y
 
-Write-Host "�  Restarting service"
+Write-Host "Restarting service"
 Restart-Service -Name 'MyGameServerService' -Force
 
-Write-Host "✅  Deploy complete."
+Write-Host "Deploy complete."
