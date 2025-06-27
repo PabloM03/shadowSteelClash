@@ -17,11 +17,11 @@ jobs:
     steps:
       # 1) Obtener info del último build exitoso (PowerShell)
       - name: Obtener último build exitoso
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # Preparar autenticación
+          # Autenticación
           $token = $Env:UNITY_API_TOKEN
           $auth  = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$token:"))
 
@@ -29,22 +29,21 @@ jobs:
           $apiUrl = "https://build-api.cloud.unity3d.com/api/v1/orgs/$($Env:ORG_ID)/projects/$($Env:PROJECT_ID)/buildtargets/$($Env:BUILD_TARGET)/builds"
           $builds = Invoke-RestMethod -Headers @{ Authorization = "Basic $auth" } -Uri $apiUrl -UseBasicParsing
 
-          # Filtrar solo los exitosos y extraer el mayor número de build
+          # Filtrar exitosos y encontrar el mayor número
           $successes = $builds | Where-Object buildStatus -EQ 'success'
-          if (-not $successes) {
-            throw "No hay builds exitosos."
-          }
+          if (-not $successes) { throw "No hay builds exitosos." }
           $latest = ($successes | Measure-Object -Property build -Maximum).Maximum
           $downloadUrl = ($successes | Where-Object build -EQ $latest).links.download_primary.href
 
           Write-Host "✔ Build exitoso más reciente: #$latest"
-          # Exportar variables para pasos posteriores
+
+          # Exportar variables para pasos siguientes
           Add-Content -Path $Env:GITHUB_ENV -Value "LATEST=$latest"
           Add-Content -Path $Env:GITHUB_ENV -Value "DOWNLOAD_URL=$downloadUrl"
 
       # 2) Desplegar en self-hosted Windows runner
       - name: Desplegar en Windows
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $latest = $Env:LATEST
@@ -54,7 +53,7 @@ jobs:
           Write-Host "� Desplegando build #$latest"
           if (Test-Path $dest) {
             Write-Host "� Limpiando carpeta $dest..."
-            Remove-Item -Recurse -Force "$dest\*" 
+            Remove-Item -Recurse -Force "$dest\*"
           } else {
             Write-Host "� Creando carpeta $dest..."
             New-Item -ItemType Directory -Path $dest | Out-Null
