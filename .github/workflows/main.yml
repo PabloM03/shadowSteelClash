@@ -19,77 +19,64 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Preparar runner (instalar jq y 7zip)
-        run: choco install -y jq 7zip
         shell: powershell
+        run: choco install -y jq 7zip
 
-      - name: Limpiar artifacts antiguos (con debug)
+      - name: Limpiar artifacts antiguos
         shell: powershell
         run: |
           # Forzar TLS1.2
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-          # 1) Calcular header
-          $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$env:UNITY_API_TOKEN:"))
-          Write-Host "DEBUG AUTH: Basic $auth"
+          # Usar token tal cual
+          $authToken = $env:UNITY_API_TOKEN
 
-          # 2) Probar autenticación
-          try {
-            Invoke-RestMethod -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs" `
-              -Headers @{ Authorization = "Basic $auth" } -ErrorAction Stop
-            Write-Host "✅ Autenticación OK"
-          } catch {
-            Write-Error "❌ Falla autenticación: $_"
-            exit 1
-          }
+          # Llamada de prueba
+          Invoke-RestMethod `
+            -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID" `
+            -Headers @{ Authorization = "Basic $authToken" } `
+            -ErrorAction Stop | Out-Null
 
-          # 3) Listar builds exitosos
-          Write-Host "� Listando builds exitosos..."
+          # Listar builds exitosos
           $all = Invoke-RestMethod `
             -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds" `
-            -Headers @{ Authorization = "Basic $auth" }
+            -Headers @{ Authorization = "Basic $authToken" }
 
           $builds = $all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Sort-Object
           if (-not $builds) {
             Write-Warning "⚠️ No hay builds exitosos para limpiar."
             exit 0
           }
-
           $latest = $builds[-1]
-          Write-Host "✔ Último build exitoso: #$latest"
 
-          foreach ($num in $builds) {
-            if ($num -ne $latest) {
-              $url = "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds/$num/artifacts"
-              Write-Host "� Borrando artifacts del build #$num → DELETE $url"
-              Invoke-RestMethod -Uri $url -Method Delete -Headers @{ Authorization = "Basic $auth" }
+          foreach ($b in $builds) {
+            if ($b -ne $latest) {
+              $url = "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds/$b/artifacts"
+              Invoke-RestMethod -Uri $url -Method Delete -Headers @{ Authorization = "Basic $authToken" }
             }
           }
 
-      - name: Descargar último build exitoso
+      - name: Descargar y descomprimir último build
         shell: powershell
         run: |
-          $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$env:UNITY_API_TOKEN:"))
-          Write-Host "� Volviendo a listar builds..."
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          $authToken = $env:UNITY_API_TOKEN
+
+          # Obtener número del build más reciente
           $all = Invoke-RestMethod `
             -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds" `
-            -Headers @{ Authorization = "Basic $auth" }
-
+            -Headers @{ Authorization = "Basic $authToken" }
           $latest = ($all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Measure-Object -Maximum).Maximum
-          Write-Host "✔ Build exitoso más reciente: #$latest"
 
-          $downloadUrl = ($all | Where-Object { $_.buildStatus -eq "success" -and $_.build -eq $latest }).links.download_primary.href
-          if (-not $downloadUrl) {
-            Write-Error "❌ No se pudo extraer la URL de descarga."
-            exit 1
-          }
+          # Extraer URL de descarga
+          $dl = ($all | Where-Object { $_.buildStatus -eq "success" -and $_.build -eq $latest }).links.download_primary.href
 
-          Write-Host "⬇ URL de descarga: $downloadUrl"
-          Remove-Item -Path build, servidor.zip -Recurse -Force -ErrorAction Ignore
+          # Preparar workspace
+          Remove-Item -Recurse -Force build, servidor.zip -ErrorAction Ignore
           New-Item -ItemType Directory -Path build | Out-Null
 
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          Invoke-WebRequest -Uri $downloadUrl -OutFile servidor.zip
-
+          # Descargar y descomprimir
+          Invoke-WebRequest -Uri $dl -OutFile servidor.zip
           Expand-Archive -Path servidor.zip -DestinationPath build -Force
 
       - name: Desplegar y reiniciar servicio en Windows remoto
