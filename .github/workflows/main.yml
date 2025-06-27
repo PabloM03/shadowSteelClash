@@ -25,15 +25,20 @@ jobs:
       - name: Limpiar artifacts antiguos
         shell: powershell
         run: |
+          # Forzar TLS1.2
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
           $auth = $env:UNITY_API_TOKEN
-          # Listar y borrar antiguos (igual que antes)...
           $all = Invoke-RestMethod `
             -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds" `
             -Headers @{ Authorization = "Basic $auth" }
 
           $builds = $all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Sort-Object
-          if (-not $builds) { exit 0 }
+          if (-not $builds) {
+            Write-Warning "⚠️ No hay builds exitosos para limpiar."
+            exit 0
+          }
+
           $latest = $builds[-1]
           foreach ($b in $builds) {
             if ($b -ne $latest) {
@@ -48,13 +53,16 @@ jobs:
         shell: powershell
         run: |
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
           $auth = $env:UNITY_API_TOKEN
           $all = Invoke-RestMethod `
             -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds" `
             -Headers @{ Authorization = "Basic $auth" }
+
           $latest = ($all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Measure-Object -Maximum).Maximum
           $dl = ($all | Where-Object { $_.buildStatus -eq "success" -and $_.build -eq $latest }).links.download_primary.href
-          echo "download_url=$dl" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+
+          Write-Output "download_url=$dl" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
 
       - name: Desplegar y reiniciar en Windows remoto
         uses: im-open/remote-windows-machine-script-execution@v2.0.3
@@ -63,5 +71,4 @@ jobs:
           service-account-id:       ${{ secrets.SERVER_USER }}
           service-account-password: ${{ secrets.SERVER_PASSWORD }}
           script-path:              .github/scripts/deploy.ps1
-        env:
-          DOWNLOAD_URL: ${{ steps.get_url.outputs.download_url }}
+          script-arguments:         "${{ steps.get_url.outputs.download_url }}"
