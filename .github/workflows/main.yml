@@ -15,16 +15,15 @@ jobs:
       BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
 
     steps:
+    # 0) Checkout
     - uses: actions/checkout@v3
 
-    # 1) Instalar jq y refrescar PATH
-    - name: Install jq
+    # 1) Instalar jq (si ya está, no rompe)
+    - name: Ensure jq is present
       shell: powershell
-      run: |
-        choco install -y jq
-        RefreshEnv.cmd
+      run: choco install -y jq || choco upgrade -y jq
 
-    # 2) Limpiar artifacts antiguos
+    # 2) Limpiar artifacts antiguos (mantiene solo el último éxito)
     - name: Clean old artifacts
       shell: powershell
       run: |
@@ -59,7 +58,7 @@ jobs:
         API="https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds"
         JSON=$(curl -s -H "Authorization: Basic ${UNITY_API_TOKEN}" "$API")
         LATEST=$(echo "$JSON" | jq 'map(select(.buildStatus=="success")) | max_by(.build) | .build')
-        if [[ -z "$LATEST" || "$LATEST" = "null" ]]; then
+        if [[ -z "$LATEST" || "$LATEST" == "null" ]]; then
           echo "::warning::No build success yet."
           exit 0
         fi
@@ -67,7 +66,7 @@ jobs:
         echo "download_url=$DL" >> "$GITHUB_OUTPUT"
         echo "ℹ️  build #$LATEST → $DL"
 
-    # 4) Copiar y ejecutar deploy.ps1 en el servidor
+    # 4) Copiar y ejecutar deploy.ps1 en el servidor (WinRM)
     - name: Deploy & restart on Windows
       uses: im-open/remote-windows-machine-script-execution@v2.0.3
       with:
