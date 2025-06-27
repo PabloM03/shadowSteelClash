@@ -71,4 +71,5 @@ jobs:
           service-account-id:       ${{ secrets.SERVER_USER }}
           service-account-password: ${{ secrets.SERVER_PASSWORD }}
           script-path:              .github/scripts/deploy.ps1
-          script-arguments:         "${{ steps.get_url.outputs.download_url }}"
+          script-arguments:         "\"${{ steps.get_url.outputs.download_url }}\""
+          split-script-arguments:   false
