@@ -1,67 +1,93 @@
 name: Deploy Unity Server (auto desde Cloud Build)
 
 on:
-  push:
-    branches: [ main ]
+  repository_dispatch:
+    types: [unity-build-complete]
 
 jobs:
-  fetch-build:
-    runs-on: ubuntu-latest
-    outputs:
-      latest: ${{ steps.get.outputs.latest }}
-      download_url: ${{ steps.get.outputs.download_url }}
+  deploy-server:
+    runs-on: windows-latest
+
+    # Variables de entorno disponibles en todos los steps
+    env:
+      UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
+      ORG_ID:          ${{ secrets.ORG_ID }}
+      PROJECT_ID:      ${{ secrets.PROJECT_ID }}
+      BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Obtener último build exitoso
-        id: get
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      # 0) Instalar jq y herramientas de descompresión
+      - name: Preparar runner (instalar jq y 7zip)
         run: |
-          set -euo pipefail
-          UNITY_AUTH=$(echo -n "${{ secrets.UNITY_API_TOKEN }}:" | base64)
-          builds_json=$(curl -s \
-            -H "Authorization: Basic $UNITY_AUTH" \
-            "https://build-api.cloud.unity3d.com/api/v1/orgs/${{ secrets.ORG_ID }}/projects/${{ secrets.PROJECT_ID }}/buildtargets/${{ secrets.BUILD_TARGET }}/builds")
+          choco install -y jq 7zip
+        shell: powershell
 
-          latest_build=$(jq 'map(select(.buildStatus=="success")) | map(.build) | max' <<<"$builds_json")
-          if [[ -z "$latest_build" || "$latest_build" == "null" ]]; then
-            echo "❌ No hay builds exitosos." >&2
-            exit 1
-          fi
-          download_url=$(jq -r \
-            '.[] | select(.buildStatus=="success" and .build=='"$latest_build"') | .links.download_primary.href' \
-            <<<"$builds_json")
-          echo "::set-output name=latest::$latest_build"
-          echo "::set-output name=download_url::$download_url"
-
-  deploy:
-    needs: fetch-build
-    runs-on: [ self-hosted, windows ]
-    steps:
-      - name: Desplegar build en Windows
+      # 1) Limpiar artifacts de builds exitosos antiguos
+      - name: Limpiar artifacts antiguos
         shell: powershell
         run: |
-          $ErrorActionPreference = 'Stop'
+          # codificar token para Basic Auth
+          $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$env:UNITY_API_TOKEN:"))
+          Write-Host "� Listando builds exitosos..."
+          $all = Invoke-RestMethod `
+            -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds" `
+            -Headers @{ Authorization = "Basic $auth" }
 
-          $latest = '${{ needs.fetch-build.outputs.latest }}'
-          $url    = '${{ needs.fetch-build.outputs.download_url }}'
-          $dest   = 'C:\server'
-
-          Write-Host "� Desplegando build #$latest"
-          if (Test-Path $dest) {
-            Write-Host "� Limpiando $dest..."
-            Remove-Item -Recurse -Force "$dest\*" 
-          } else {
-            Write-Host "� Creando $dest..."
-            New-Item -ItemType Directory -Path $dest | Out-Null
+          $builds = $all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Sort-Object
+          if (-not $builds) {
+            Write-Warning "⚠️ No hay builds exitosos para limpiar."
+            exit 0
           }
 
-          Write-Host "⬇️  Descargando artefacto..."
-          Invoke-WebRequest -Uri $url -OutFile "$dest\server.zip" -UseBasicParsing
+          $latest = $builds[-1]
+          Write-Host "✔ Último build exitoso: #$latest"
 
-          Write-Host "� Descomprimiendo..."
-          Expand-Archive -Path "$dest\server.zip" -DestinationPath $dest -Force
-          Remove-Item "$dest\server.zip"
+          foreach ($num in $builds) {
+            if ($num -ne $latest) {
+              $url = "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds/$num/artifacts"
+              Write-Host "� Borrando artifacts del build #$num → DELETE $url"
+              Invoke-RestMethod -Uri $url -Method Delete -Headers @{ Authorization = "Basic $auth" }
+            }
+          }
 
-          Write-Host "� Reiniciando servicio 'mygame-server'..."
-          Restart-Service -Name mygame-server -Force
+      # 2) Descargar el último build exitoso
+      - name: Descargar último build exitoso
+        shell: powershell
+        run: |
+          $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$env:UNITY_API_TOKEN:"))
+          Write-Host "� Volviendo a listar builds..."
+          $all = Invoke-RestMethod `
+            -Uri "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds" `
+            -Headers @{ Authorization = "Basic $auth" }
 
-          Write-Host "✅ Despliegue completado."
+          $latest = ($all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -ExpandProperty build | Measure-Object -Maximum).Maximum
+          Write-Host "✔ Build exitoso más reciente: #$latest"
+
+          $downloadUrl = ($all | Where-Object { $_.buildStatus -eq "success" -and $_.build -eq $latest }).links.download_primary.href
+          if (-not $downloadUrl) {
+            Write-Error "❌ No se pudo extraer la URL de descarga."
+            exit 1
+          }
+
+          Write-Host "⬇ URL de descarga: $downloadUrl"
+          Remove-Item -Path build, servidor.zip -Recurse -Force -ErrorAction Ignore
+          New-Item -ItemType Directory -Path build | Out-Null
+
+          # Forzar TLS1.2 si es necesario
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri $downloadUrl -OutFile servidor.zip
+
+          # Descomprimir el zip
+          Expand-Archive -Path servidor.zip -DestinationPath build -Force
+
+      # 3) Desplegar en el servidor Windows remoto
+      - name: Desplegar y reiniciar servicio en Windows remoto
+        uses: im-open/remote-windows-machine-script-execution@v1.1.0
+        with:
+          server:                  ${{ secrets.SERVER_IP }}
+          service-account-id:      ${{ secrets.SERVER_USER }}
+          service-account-password:${{ secrets.SERVER_PASSWORD }}
+          script-path:             .github/scripts/deploy.ps1
