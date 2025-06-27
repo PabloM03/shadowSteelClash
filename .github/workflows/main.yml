@@ -18,7 +18,7 @@ jobs:
     # 0) Checkout
     - uses: actions/checkout@v3
 
-    # 1) Instala jq (lo necesita el paso bash)
+    # 1) Instalar jq para el paso bash
     - name: Install jq
       shell: powershell
       run: choco install -y jq
@@ -32,7 +32,7 @@ jobs:
         $api  = "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds"
         $all  = Invoke-RestMethod -Uri $api -Headers @{ Authorization = "Basic $auth" }
 
-        $succ = $all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -Expand build | Sort-Object
+        $succ  = $all | Where-Object { $_.buildStatus -eq "success" } | Select-Object -Expand build | Sort-Object
         if ($succ) {
           $latest = $succ[-1]
           foreach ($b in $succ) {
@@ -40,11 +40,9 @@ jobs:
               Invoke-RestMethod -Method Delete -Uri "$api/$b/artifacts" -Headers @{ Authorization = "Basic $auth" }
             }
           }
-        } else {
-          Write-Host "⚠️ No hay builds 'success' para limpiar."
         }
 
-    # 3) Obtener URL del último build SUCCESS (bash + jq)
+    # 3) Obtener la URL del último build (bash+jq, la prueba que te funciona)
     - name: Get last build URL
       id: get_url
       shell: bash
@@ -55,15 +53,17 @@ jobs:
         LATEST=$(echo "$JSON" | jq 'map(select(.buildStatus=="success")) | max_by(.build) | .build')
 
         if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
-          echo "::warning::No existe ningún build con status success. Se cancela el job."
+          echo "::warning::No hay builds con estado success."
           exit 0
         fi
 
-        DL=$(echo "$JSON" | jq -r --arg num "$LATEST" '.[] | select(.buildStatus=="success" and (.build|tostring)==$num) | .links.download_primary.href')
-        echo "�  URL build #$LATEST = $DL"
+        DL=$(echo "$JSON" | jq -r --arg num "$LATEST" '.[]
+              | select(.buildStatus=="success" and (.build|tostring)==$num)
+              | .links.download_primary.href')
         echo "download_url=$DL" >> "$GITHUB_OUTPUT"
+        echo "�  build #$LATEST → $DL"
 
-    # 4) Copiar y ejecutar deploy.ps1 en el servidor Windows
+    # 4) Copiar y ejecutar deploy.ps1 en tu servidor Windows
     - name: Deploy & restart on remote Windows
       uses: im-open/remote-windows-machine-script-execution@v2.0.3
       with:
@@ -71,6 +71,5 @@ jobs:
         service-account-id:       ${{ secrets.SERVER_USER }}
         service-account-password: ${{ secrets.SERVER_PASSWORD }}
         script-path:              .github/scripts/deploy.ps1
-        # Pasar la URL como único argumento; comillas escapadas
+        # Pasa la URL como único argumento (sin dividir)
         script-arguments:         "\"${{ steps.get_url.outputs.download_url }}\""
-        split-arguments:          false   # evita que la acción intente dividir la URL
