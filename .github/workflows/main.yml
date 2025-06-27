@@ -28,7 +28,7 @@ jobs:
           set -euo pipefail
           AUTH=$(printf '%s:' "$UNITY_API_TOKEN" | base64)
 
-          echo "� Listando builds exitosos..."
+          echo "�️ Listando builds exitosos..."
           all_builds=$(curl -s \
             -H "Authorization: Basic $AUTH" \
             "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds")
@@ -44,7 +44,7 @@ jobs:
 
           for num in $builds; do
             if [[ "$num" -ne "$latest" ]]; then
-              echo "�️  Borrando artefactos del build #$num..."
+              echo "� Borrando artefactos del build #$num..."
               curl -s -X DELETE \
                 -H "Authorization: Basic $AUTH" \
                 "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds/${num}/artifacts"
@@ -52,7 +52,7 @@ jobs:
           done
 
       # ────────────────────────────────────────────────────────────────
-      # 2) Descargar el último build exitoso directamente
+      # 2) Descargar y preparar el último build exitoso
       - name: Descargar último build exitoso
         env:
           UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
@@ -80,14 +80,16 @@ jobs:
             exit 1
           fi
 
-          echo "✅ URL de descarga: $download_url"
-          echo "⬇️  Descargando artefacto..."
+          echo "⬇️ Descargando artefacto: $download_url"
           rm -rf build servidor.zip
           mkdir -p build
           curl -sL "$download_url" -o servidor.zip
 
           echo "� Descomprimiendo en ./build/..."
           unzip -o servidor.zip -d build/
+
+          echo "� Marcando ejecutable"
+          chmod +x build/servidorJuego.x86_64
 
       # ────────────────────────────────────────────────────────────────
       # 3) Limpiar carpeta remota en el VPS
