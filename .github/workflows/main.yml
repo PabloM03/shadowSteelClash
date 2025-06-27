@@ -5,57 +5,70 @@ on:
     branches: [ main ]
 
 jobs:
-  deploy-server:
-    runs-on: [ self-hosted, windows ]
-
-    env:
-      UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
-      ORG_ID:          ${{ secrets.ORG_ID }}
-      PROJECT_ID:      ${{ secrets.PROJECT_ID }}
-      BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job 1: Fetch build info usando Bash en ubuntu-latest
+  # ────────────────────────────────────────────────────────────────────────────
+  fetch-build:
+    runs-on: ubuntu-latest
+    outputs:
+      latest: ${{ steps.get.outputs.latest }}
+      url:    ${{ steps.get.outputs.download_url }}
 
     steps:
-      # 1) Obtener info del último build exitoso (PowerShell)
-      - name: Obtener último build exitoso
-        shell: powershell
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Obtener último build exitoso (bash)
+        id: get
+        run: |
+          set -euo pipefail
+          UNITY_AUTH=$(echo -n "${{ secrets.UNITY_API_TOKEN }}:" | base64)
+          builds_json=$(curl -s \
+            -H "Authorization: Basic $UNITY_AUTH" \
+            "https://build-api.cloud.unity3d.com/api/v1/orgs/${{ secrets.ORG_ID }}/projects/${{ secrets.PROJECT_ID }}/buildtargets/${{ secrets.BUILD_TARGET }}/builds")
+
+          latest_build=$(jq 'map(select(.buildStatus=="success")) | map(.build) | max' <<<"$builds_json")
+          if [[ -z "$latest_build" || "$latest_build" == "null" ]]; then
+            echo "❌ No hay builds exitosos." >&2
+            exit 1
+          fi
+
+          download_url=$(jq -r \
+            '.[] | select(.buildStatus=="success" and .build=='"$latest_build"') | .links.download_primary.href' \
+            <<<"$builds_json")
+          if [[ -z "$download_url" || "$download_url" == "null" ]]; then
+            echo "❌ No se pudo extraer la URL." >&2
+            exit 1
+          fi
+
+          echo "✔ Build #$latest_build → $download_url"
+          # Exportar outputs
+          echo "::set-output name=latest::$latest_build"
+          echo "::set-output name=download_url::$download_url"
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job 2: Deploy en tu self-hosted Windows runner
+  # ────────────────────────────────────────────────────────────────────────────
+  deploy:
+    needs: fetch-build
+    runs-on: [ self-hosted, windows ]
+
+    steps:
+      - name: Desplegar build en Windows
+        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # Autenticación
-          $token = $Env:UNITY_API_TOKEN
-          $auth  = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$token:"))
-
-          Write-Host "� Listando builds exitosos..."
-          $apiUrl = "https://build-api.cloud.unity3d.com/api/v1/orgs/$($Env:ORG_ID)/projects/$($Env:PROJECT_ID)/buildtargets/$($Env:BUILD_TARGET)/builds"
-          $builds = Invoke-RestMethod -Headers @{ Authorization = "Basic $auth" } -Uri $apiUrl -UseBasicParsing
-
-          # Filtrar exitosos y encontrar el mayor número
-          $successes = $builds | Where-Object buildStatus -EQ 'success'
-          if (-not $successes) { throw "No hay builds exitosos." }
-          $latest = ($successes | Measure-Object -Property build -Maximum).Maximum
-          $downloadUrl = ($successes | Where-Object build -EQ $latest).links.download_primary.href
-
-          Write-Host "✔ Build exitoso más reciente: #$latest"
-
-          # Exportar variables para pasos siguientes
-          Add-Content -Path $Env:GITHUB_ENV -Value "LATEST=$latest"
-          Add-Content -Path $Env:GITHUB_ENV -Value "DOWNLOAD_URL=$downloadUrl"
-
-      # 2) Desplegar en self-hosted Windows runner
-      - name: Desplegar en Windows
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $latest = $Env:LATEST
-          $url    = $Env:DOWNLOAD_URL
+          $latest = '${{ needs.fetch-build.outputs.latest }}'
+          $url    = '${{ needs.fetch-build.outputs.download_url }}'
           $dest   = 'C:\server'
 
           Write-Host "� Desplegando build #$latest"
           if (Test-Path $dest) {
-            Write-Host "� Limpiando carpeta $dest..."
-            Remove-Item -Recurse -Force "$dest\*"
+            Write-Host "� Limpiando $dest..."
+            Remove-Item -Recurse -Force "$dest\*" 
           } else {
-            Write-Host "� Creando carpeta $dest..."
+            Write-Host "� Creando $dest..."
             New-Item -ItemType Directory -Path $dest | Out-Null
           }
 
