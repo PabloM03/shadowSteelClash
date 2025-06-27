@@ -1,13 +1,13 @@
 name: Deploy Unity Server (auto desde Cloud Build)
-# Despliega automáticamente el último build exitoso de Unity Cloud Build
-# en un servidor Windows mediante WinRM.
+
 on:
   push:
     branches: [ main ]
 
 jobs:
   deploy-server:
-    runs-on: ubuntu-latest
+    runs-on: [ self-hosted, windows ]
+
     env:
       UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
       ORG_ID:          ${{ secrets.ORG_ID }}
@@ -15,70 +15,52 @@ jobs:
       BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
 
     steps:
-      # 0) Prepara el runner
-      - name: Preparar runner (instalar jq, unzip y Python)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq unzip python3 python3-pip
-
       # 1) Obtener info del último build exitoso
-      - name: Listar y extraer URL del último build exitoso
+      - name: Obtener último build exitoso
         id: fetch_build
+        shell: bash
         run: |
           set -euo pipefail
           AUTH=$(printf '%s:' "$UNITY_API_TOKEN" | base64)
+          echo "� Listando builds exitosos..."
           builds_json=$(curl -s -H "Authorization: Basic $AUTH" \
             "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds")
+
           latest=$(jq 'map(select(.buildStatus=="success")) | max_by(.build) | .build' <<<"$builds_json")
           download_url=$(jq -r \
             '.[] | select(.buildStatus=="success" and .build == '"$latest"') | .links.download_primary.href' \
             <<<"$builds_json")
-          echo "LATEST=$latest"   >> $GITHUB_ENV
+
+          echo "✔ Build exitoso más reciente: #$latest"
+          echo "LATEST=$latest"           >> $GITHUB_ENV
           echo "DOWNLOAD_URL=$download_url" >> $GITHUB_ENV
 
-      # 2) Instalar pywinrm
-      - name: Configurar pywinrm
+      # 2) Desplegar en self-hosted Windows runner
+      - name: Desplegar en Windows
+        shell: pwsh
         run: |
-          python3 -m pip install --upgrade pip
-          pip3 install pywinrm
+          $ErrorActionPreference = 'Stop'
+          $latest = $Env:LATEST
+          $url    = $Env:DOWNLOAD_URL
+          $dest   = 'C:\server'
 
-      # 3) Desplegar en servidor Windows vía WinRM
-      - name: Deploy en servidor Windows
-        env:
-          SERVER_IP:       ${{ secrets.SERVER_IP }}
-          SERVER_USER:     ${{ secrets.SERVER_USER }}
-          SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
-          DOWNLOAD_URL:    ${{ env.DOWNLOAD_URL }}
-        run: |
-          python3 << 'EOF'
-          import os
-          from winrm.protocol import Protocol
+          Write-Host "� Desplegando build #$latest"
+          if (Test-Path $dest) {
+            Write-Host "� Limpiando carpeta $dest..."
+            Remove-Item -Recurse -Force "$dest\*" 
+          } else {
+            Write-Host "� Creando carpeta $dest..."
+            New-Item -ItemType Directory -Path $dest | Out-Null
+          }
 
-          host = os.environ['SERVER_IP']
-          user = os.environ['SERVER_USER']
-          pwd  = os.environ['SERVER_PASSWORD']
-          url  = os.environ['DOWNLOAD_URL']
+          Write-Host "⬇️  Descargando artefacto..."
+          Invoke-WebRequest -Uri $url -OutFile "$dest\server.zip"
 
-          # Conectar por WinRM (plaintext en 5985)
-          p = Protocol(
-            endpoint=f'http://{host}:5985/wsman',
-            transport='plaintext',
-            username=user,
-            password=pwd
-          )
-          shell_id = p.open_shell()
+          Write-Host "� Descomprimiendo..."
+          Expand-Archive -Path "$dest\server.zip" -DestinationPath $dest -Force
+          Remove-Item "$dest\server.zip"
 
-          steps = [
-            'Remove-Item -Recurse -Force C:\\server\\*',
-            f'Invoke-WebRequest -Uri "{url}" -OutFile C:\\server\\server.zip',
-            'Expand-Archive -Path C:\\server\\server.zip -DestinationPath C:\\server\\ -Force',
-            'Remove-Item C:\\server\\server.zip',
-            'Restart-Service -Name mygame-server -Force'
-          ]
+          Write-Host "� Reiniciando servicio 'mygame-server'..."
+          Restart-Service -Name mygame-server -Force
 
-          for cmd in steps:
-              p.run_command(shell_id, 'powershell', ['-Command', cmd])
-          p.close_shell(shell_id)
-
-          print("✅ Despliegue completado.")
-          EOF
+          Write-Host "✅ Despliegue completado."
