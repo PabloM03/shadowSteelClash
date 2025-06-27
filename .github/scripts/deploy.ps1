@@ -1,40 +1,34 @@
-<#
-    Despliega el build Unity que llega como ZIP, lo extrae en C:\GameServer
-    y (re)configura un servicio NSSM llamado WindowsServer.
-    Se invoca desde el workflow:  .\deploy.ps1 <URL_DEL_ZIP>
-#>
-
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory=$true)]
     [string]$DOWNLOAD_URL
 )
 
-# ---------- CONFIG -------------------------------
-$targetDir   = 'C:\GameServer'                       # Carpeta de despliegue
+# --- CONFIG ---------------------------------------------------------------
+$targetDir   = 'C:\GameServer'
 $zipPath     = Join-Path $targetDir 'build.zip'
 $exePath     = Join-Path $targetDir 'windows-server.exe'
-$serviceName = 'WindowsServer'                       # Nombre del servicio
-$appArgs     = '-batchmode -nographics'              # Flags para headless
+$serviceName = 'WindowsServer'
+$appArgs     = '-batchmode -nographics'
 $sevenZipExe = 'C:\Program Files\7-Zip\7z.exe'
 $chocoExe    = 'C:\ProgramData\chocolatey\bin\choco.exe'
-# -------------------------------------------------
+# -------------------------------------------------------------------------
 
 $ErrorActionPreference = 'Stop'
 $VerbosePreference     = 'Continue'
 
-# ---------- helpers ------------------------------
 function Ensure-Choco {
     if (-not (Test-Path $chocoExe)) {
-        Write-Host 'Installing Chocolatey...'
+        Write-Host 'Installing Chocolatey ...'
         Set-ExecutionPolicy Bypass -Scope Process -Force
-        Invoke-Expression (Invoke-WebRequest https://community.chocolatey.org/install.ps1 -UseBasicParsing).Content
+        Invoke-Expression (Invoke-WebRequest `
+            https://community.chocolatey.org/install.ps1 -UseBasicParsing).Content
     }
-    $chocoDir = Split-Path $chocoExe
-    if (-not ($env:Path -split ';' | Where-Object { $_ -eq $chocoDir })) {
-        $env:Path += ";$chocoDir"
+    $dir = Split-Path $chocoExe
+    if (-not ($env:Path -split ';' | Where-Object { $_ -eq $dir })) {
+        $env:Path += ';' + $dir
     }
 }
-function Ensure-Pkg ([string]$pkg) {
+function Ensure-Pkg([string]$pkg){
     Ensure-Choco
     if (-not (choco list --local-only | Select-String "^$pkg")) {
         & $chocoExe install $pkg -y --no-progress
@@ -42,44 +36,40 @@ function Ensure-Pkg ([string]$pkg) {
 }
 function Ensure-7Zip { Ensure-Pkg 7zip }
 function Ensure-Nssm { Ensure-Pkg nssm }
-# -----------------------------------------------
 
-# 1) Crear carpeta de destino
+# 1) Folder
 if (-not (Test-Path $targetDir)) {
-    New-Item -Type Directory -Path $targetDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
     Write-Host "Created $targetDir"
 }
 
-# 2) Herramientas necesarias
+# 2) Tools
 Ensure-7Zip
 Ensure-Nssm
 
-# 3) Descargar ZIP
+# 3) Download
 Write-Host "Downloading: $DOWNLOAD_URL"
 Start-BitsTransfer -Source $DOWNLOAD_URL -Destination $zipPath
 
-# 4) Extraer ZIP
-Write-Host 'Extracting...'
+# 4) Extract
+Write-Host 'Extracting ...'
 & $sevenZipExe x $zipPath "-o$targetDir" -y
 
-# 5) Crear o actualizar servicio NSSM
+# 5) NSSM service
 if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
-
-    Write-Host "Service $serviceName exists – updating path and parameters"
+    Write-Host 'Service exists – updating'
     nssm set $serviceName Application    $exePath
     nssm set $serviceName AppDirectory   $targetDir
     nssm set $serviceName AppParameters  $appArgs
-
 } else {
-
-    Write-Host "Creating service $serviceName"
+    Write-Host 'Creating service'
     nssm install $serviceName $exePath
     nssm set     $serviceName AppDirectory  $targetDir
     nssm set     $serviceName AppParameters $appArgs
 }
 
-# 6) Reiniciar el servicio
-Write-Host "Restarting $serviceName ..."
+# 6) Restart
+Write-Host ('Restarting {0} ...' -f $serviceName)
 Restart-Service -Name $serviceName -Force
 
 Write-Host 'Deploy complete.'
