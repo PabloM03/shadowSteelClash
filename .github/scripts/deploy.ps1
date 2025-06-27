@@ -1,6 +1,10 @@
-param()   # sin parámetros posicionales
+param(
+    [string]$DOWNLOAD_URL
+)
 
-$dl      = $env:DOWNLOAD_URL
+# Si llegó como argumento úsalo; si no, toma la env-var
+$dl = if ($DOWNLOAD_URL) { $DOWNLOAD_URL } else { $env:DOWNLOAD_URL }
+
 $target  = 'C:\GameServer'
 $tempZip = "$target\build.zip"
 
@@ -14,4 +18,5 @@ Write-Host "�  Extracting..."
 
 Write-Host "�  Restarting service"
 Restart-Service -Name 'MyGameServerService' -Force
+
 Write-Host "✅  Deploy complete."
