@@ -7,16 +7,16 @@ on:
 jobs:
   deploy-server:
     runs-on: ubuntu-latest
-
     steps:
-      # 0) Prepara el runner
-      - name: Preparar runner (instalar jq y unzip)
+      # 1) Instala jq para parsear JSON
+      - name: Preparar runner
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq unzip
+          sudo apt-get install -y jq
 
-      # 1) Limpiar artifacts de builds exitosos antiguos
-      - name: Limpiar artifacts de builds exitosos antiguos
+      # 2) Averigua el último build exitoso y su URL
+      - name: Obtener último build exitoso
+        id: unity
         env:
           UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
           ORG_ID:          ${{ secrets.ORG_ID }}
@@ -25,95 +25,69 @@ jobs:
         run: |
           set -euo pipefail
           AUTH=$(printf '%s:' "$UNITY_API_TOKEN" | base64)
-
-          echo "� Listando builds exitosos..."
-          all_builds=$(curl -s -H "Authorization: Basic $AUTH" \
+          builds=$(curl -s -H "Authorization: Basic $AUTH" \
             "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds")
+          latest=$(jq 'map(select(.buildStatus=="success")) | map(.build) | max' <<<"$builds")
+          url=$(jq -r \
+            '.[] | select(.buildStatus=="success" and .build=='"$latest"') | .links.download_primary.href' \
+            <<<"$builds")
+          echo "::set-output name=number::$latest"
+          echo "::set-output name=url::$url"
 
-          builds=$(jq -r 'map(select(.buildStatus=="success")) | map(.build) | sort' <<<"$all_builds")
-          if [[ -z "$builds" ]]; then
-            echo "⚠️  No hay builds exitosos para limpiar."
-            exit 0
-          fi
-
-          latest=$(echo "$builds" | tail -1)
-          echo "✔ Último build exitoso: #$latest"
-
-          for num in $builds; do
-            if [[ "$num" -ne "$latest" ]]; then
-              url="https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds/${num}/artifacts"
-              echo "�️  Borrando artifacts del build #$num → DELETE ${url}"
-              curl -s -X DELETE \
-                -H "Authorization: Basic $AUTH" \
-                "$url"
-            fi
-          done
-
-      # 2) Descargar el último build exitoso
-      - name: Descargar último build exitoso
-        env:
-          UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
-          ORG_ID:          ${{ secrets.ORG_ID }}
-          PROJECT_ID:      ${{ secrets.PROJECT_ID }}
-          BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
-        run: |
-          set -euo pipefail
-          AUTH=$(printf '%s:' "$UNITY_API_TOKEN" | base64)
-
-          echo "� Volviendo a listar builds exitosos para extraer URL..."
-          all_builds=$(curl -s -H "Authorization: Basic $AUTH" \
-            "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds")
-
-          latest=$(jq 'map(select(.buildStatus=="success")) | map(.build) | max' <<<"$all_builds")
-          echo "✔ Build exitoso más reciente: #$latest"
-
-          download_url=$(jq -r \
-            '.[] | select(.buildStatus=="success" and .build == '"$latest"') | .links.download_primary.href' \
-            <<<"$all_builds")
-
-          if [[ -z "$download_url" || "$download_url" == "null" ]]; then
-            echo "❌ No se pudo extraer la URL de descarga." >&2
-            exit 1
-          fi
-
-          echo "⬇️  URL de descarga: $download_url"
-          echo "� Limpiando workspace local..."
-          rm -rf build servidor.zip
-          mkdir -p build
-
-          echo "⬇️  Descargando artefacto..."
-          curl -sL "$download_url" -o servidor.zip
-
-          echo "� Descomprimiendo en ./build/..."
-          unzip -o servidor.zip -d build/
-
-      # 3) Limpiar carpeta remota en el VPS
-      - name: Limpiar carpeta remota en VPS
-        uses: appleboy/ssh-action@v1.0.0
+      # 3) Conéctate por WinRM y desplegar en Windows
+      - name: Desplegar en Windows vía WinRM
+        uses: appleboy/psrp-action@v1.0.3
         with:
-          host:     ${{ secrets.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key:      ${{ secrets.SSH_PRIVATE_KEY }}
+          host: ${{ secrets.SERVER_IP }}
+          user: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}   # o usa un Secret distinto
           script: |
-            rm -rf /home/${{ secrets.SERVER_USER }}/server/*
+            $ErrorActionPreference = 'Stop'
 
-      # 4) Subir el nuevo build al VPS
-      - name: Subir build al VPS
-        uses: appleboy/scp-action@v0.1.5
-        with:
-          host:     ${{ secrets.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key:      ${{ secrets.SSH_PRIVATE_KEY }}
-          source:   "build/**"
-          target:   "/home/${{ secrets.SERVER_USER }}/server"
+            $deployDir = "C:\server"
+            $buildDir  = "$deployDir\build"
+            $zipFile   = "$deployDir\servidor.zip"
+            $svcName   = "ShadowSteelClashServer"
 
-      # 5) Reiniciar el servicio remoto
-      - name: Reiniciar servicio
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host:     ${{ secrets.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key:      ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            sudo systemctl restart mygame-server
-            echo "✅ Servicio reiniciado."
+            # Si es la primera vez, instala unzip (choco) y registra el servicio con NSSM
+            if (!(Test-Path $buildDir)) {
+              Write-Host "⚙️ Primera vez: creando directorios e instalando unzip..."
+              New-Item $buildDir -ItemType Directory | Out-Null
+
+              # Si no tienes Chocolatey, instala:
+              if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+                Set-ExecutionPolicy Bypass -Scope Process -Force
+                iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+              }
+              choco install unzip -y
+
+              # Descarga y registra NSSM
+              $nssmZip = "$deployDir\nssm.zip"
+              (New-Object System.Net.WebClient).DownloadFile(
+                'https://nssm.cc/release/nssm-2.24.zip', $nssmZip)
+              Expand-Archive $nssmZip "$deployDir\nssm"
+              $nssmExe = "$deployDir\nssm\win64\nssm.exe"
+
+              # Crea el servicio Windows con NSSM
+              & $nssmExe install $svcName "$buildDir\windows-server.exe"
+              & $nssmExe set $svcName DisplayName "Servidor Unity ShadowSteelClash"
+              & $nssmExe set $svcName AppDirectory "$buildDir"
+              & $nssmExe set $svcName Start SERVICE_AUTO_START
+            }
+
+            # 4) Descarga y sobreescribe el último build
+            Write-Host "⬇️  Bajando build #${{ steps.unity.outputs.number }}..."
+            Invoke-WebRequest -Uri "${{ steps.unity.outputs.url }}" -OutFile $zipFile
+
+            Write-Host "� Descomprimiendo..."
+            Remove-Item "$buildDir\*" -Recurse -Force
+            Expand-Archive $zipFile $buildDir -Force
+
+            # 5) Arranca o reinicia el servicio
+            Write-Host "� Reiniciando servicio..."
+            if (Get-Service $svcName -ErrorAction SilentlyContinue) {
+              Restart-Service $svcName -Force
+            } else {
+              Start-Service $svcName
+            }
+            Write-Host "✅ Servicio $svcName está $(Get-Service $svcName)."
