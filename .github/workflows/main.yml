@@ -5,20 +5,14 @@ on:
     branches: [ main ]
 
 jobs:
-  # ────────────────────────────────────────────────────────────────────────────
-  # Job 1: Fetch build info usando Bash en ubuntu-latest
-  # ────────────────────────────────────────────────────────────────────────────
   fetch-build:
     runs-on: ubuntu-latest
     outputs:
       latest: ${{ steps.get.outputs.latest }}
-      url:    ${{ steps.get.outputs.download_url }}
-
+      download_url: ${{ steps.get.outputs.download_url }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Obtener último build exitoso (bash)
+      - uses: actions/checkout@v4
+      - name: Obtener último build exitoso
         id: get
         run: |
           set -euo pipefail
@@ -32,30 +26,18 @@ jobs:
             echo "❌ No hay builds exitosos." >&2
             exit 1
           fi
-
           download_url=$(jq -r \
             '.[] | select(.buildStatus=="success" and .build=='"$latest_build"') | .links.download_primary.href' \
             <<<"$builds_json")
-          if [[ -z "$download_url" || "$download_url" == "null" ]]; then
-            echo "❌ No se pudo extraer la URL." >&2
-            exit 1
-          fi
-
-          echo "✔ Build #$latest_build → $download_url"
-          # Exportar outputs
           echo "::set-output name=latest::$latest_build"
           echo "::set-output name=download_url::$download_url"
 
-  # ────────────────────────────────────────────────────────────────────────────
-  # Job 2: Deploy en tu self-hosted Windows runner
-  # ────────────────────────────────────────────────────────────────────────────
   deploy:
     needs: fetch-build
     runs-on: [ self-hosted, windows ]
-
     steps:
       - name: Desplegar build en Windows
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
 
