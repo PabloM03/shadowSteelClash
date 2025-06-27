@@ -1,12 +1,17 @@
 name: Deploy Unity Server (auto desde Cloud Build)
 
 on:
-  repository_dispatch:
-    types: [unity-build-complete]
+  push:
+    branches: [ main ]
 
 jobs:
   deploy-server:
     runs-on: ubuntu-latest
+    env:
+      UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
+      ORG_ID:          ${{ secrets.ORG_ID }}
+      PROJECT_ID:      ${{ secrets.PROJECT_ID }}
+      BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
 
     steps:
       # 0) Prepara el runner
@@ -15,105 +20,53 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq unzip
 
-      # 1) Limpiar artifacts de builds exitosos antiguos
-      - name: Limpiar artifacts de builds exitosos antiguos
-        env:
-          UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
-          ORG_ID:          ${{ secrets.ORG_ID }}
-          PROJECT_ID:      ${{ secrets.PROJECT_ID }}
-          BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
+      # 1) Obtener info del último build exitoso
+      - name: Listar y extraer URL del último build exitoso
+        id: fetch_build
         run: |
           set -euo pipefail
           AUTH=$(printf '%s:' "$UNITY_API_TOKEN" | base64)
-
           echo "� Listando builds exitosos..."
-          all_builds=$(curl -s -H "Authorization: Basic $AUTH" \
+          builds_json=$(curl -s -H "Authorization: Basic $AUTH" \
             "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds")
 
-          builds=$(jq -r 'map(select(.buildStatus=="success")) | map(.build) | sort' <<<"$all_builds")
-          if [[ -z "$builds" ]]; then
-            echo "⚠️  No hay builds exitosos para limpiar."
-            exit 0
-          fi
-
-          latest=$(echo "$builds" | tail -1)
-          echo "✔ Último build exitoso: #$latest"
-
-          for num in $builds; do
-            if [[ "$num" -ne "$latest" ]]; then
-              url="https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds/${num}/artifacts"
-              echo "�️  Borrando artifacts del build #$num → DELETE ${url}"
-              curl -s -X DELETE \
-                -H "Authorization: Basic $AUTH" \
-                "$url"
-            fi
-          done
-
-      # 2) Descargar el último build exitoso
-      - name: Descargar último build exitoso
-        env:
-          UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
-          ORG_ID:          ${{ secrets.ORG_ID }}
-          PROJECT_ID:      ${{ secrets.PROJECT_ID }}
-          BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
-        run: |
-          set -euo pipefail
-          AUTH=$(printf '%s:' "$UNITY_API_TOKEN" | base64)
-
-          echo "� Volviendo a listar builds exitosos para extraer URL..."
-          all_builds=$(curl -s -H "Authorization: Basic $AUTH" \
-            "https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds")
-
-          latest=$(jq 'map(select(.buildStatus=="success")) | map(.build) | max' <<<"$all_builds")
+          latest=$(jq 'map(select(.buildStatus=="success")) | max_by(.build) | .build' <<<"$builds_json")
           echo "✔ Build exitoso más reciente: #$latest"
-
           download_url=$(jq -r \
             '.[] | select(.buildStatus=="success" and .build == '"$latest"') | .links.download_primary.href' \
-            <<<"$all_builds")
+            <<<"$builds_json")
 
           if [[ -z "$download_url" || "$download_url" == "null" ]]; then
             echo "❌ No se pudo extraer la URL de descarga." >&2
             exit 1
           fi
+          echo "⬇️  URL: $download_url"
 
-          echo "⬇️  URL de descarga: $download_url"
-          echo "� Limpiando workspace local..."
-          rm -rf build servidor.zip
-          mkdir -p build
+          # Exportar variables al entorno
+          echo "LATEST=$latest" >> $GITHUB_ENV
+          echo "DOWNLOAD_URL=$download_url" >> $GITHUB_ENV
 
-          echo "⬇️  Descargando artefacto..."
-          curl -sL "$download_url" -o servidor.zip
-
-          echo "� Descomprimiendo en ./build/..."
-          unzip -o servidor.zip -d build/
-
-      # 3) Limpiar carpeta remota en el VPS
-      - name: Limpiar carpeta remota en VPS
-        uses: appleboy/ssh-action@v1.0.0
+      # 2) Desplegar en Windows via WinRM
+      - name: Deploy en servidor Windows
+        uses: busypeoples/winrm-action@v1.0.2
         with:
           host:     ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
-          key:      ${{ secrets.SSH_PRIVATE_KEY }}
+          password: ${{ secrets.SERVER_PASSWORD }}
           script: |
-            rm -rf /home/${{ secrets.SERVER_USER }}/server/*
+            $ErrorActionPreference = 'Stop'
+            Write-Host "� Build#: $env:LATEST"
+            Write-Host "� Limpiando C:\server..."
+            Remove-Item -Recurse -Force C:\server\*
 
-      # 4) Subir el nuevo build al VPS
-      - name: Subir build al VPS
-        uses: appleboy/scp-action@v0.1.5
-        with:
-          host:     ${{ secrets.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key:      ${{ secrets.SSH_PRIVATE_KEY }}
-          source:   "build/**"
-          target:   "/home/${{ secrets.SERVER_USER }}/server"
+            Write-Host "⬇️  Descargando artefacto..."
+            Invoke-WebRequest -Uri "$env:DOWNLOAD_URL" -OutFile C:\server\server.zip
 
-      # 5) Reiniciar el servicio remoto
-      - name: Reiniciar servicio
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host:     ${{ secrets.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key:      ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            sudo systemctl restart mygame-server
-            echo "✅ Servicio reiniciado."
+            Write-Host "� Descomprimiendo..."
+            Expand-Archive -Path C:\server\server.zip -DestinationPath C:\server\ -Force
+            Remove-Item C:\server\server.zip
+
+            Write-Host "� Reiniciando servicio 'mygame-server'..."
+            Restart-Service -Name mygame-server -Force
+
+            Write-Host "✅ Despliegue completado."
