@@ -37,14 +37,6 @@ function Ensure-Pkg([string]$pkg){
 function Ensure-7Zip { Ensure-Pkg 7zip }
 function Ensure-Nssm { Ensure-Pkg nssm }
 
-function Get-NssmPath {
-    $nssmPath = (Get-ChildItem "C:\ProgramData\chocolatey\lib\nssm\tools\nssm.exe" -ErrorAction SilentlyContinue).FullName
-    if (-not $nssmPath) {
-        throw "nssm.exe not found. Ensure NSSM is installed."
-    }
-    return $nssmPath
-}
-
 # 1) Folder
 if (-not (Test-Path $targetDir)) {
     New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
@@ -56,19 +48,17 @@ Ensure-7Zip
 Ensure-Nssm
 
 # 3) Download
-$nssmExe = Get-NssmPath
+Write-Host "Downloading: $DOWNLOAD_URL"
+Start-BitsTransfer -Source $DOWNLOAD_URL -Destination $zipPath
 
+# 4) Extract
+Write-Host 'Extracting ...'
+& $sevenZipExe x $zipPath "-o$targetDir" -y
+
+# 5) NSSM service
 if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
     Write-Host 'Service exists – updating'
-    & $nssmExe set $serviceName Application    $exePath
-    & $nssmExe set $serviceName AppDirectory   $targetDir
-    & $nssmExe set $serviceName AppParameters  $appArgs
-} else {
-    Write-Host 'Creating service'
-    & $nssmExe install $serviceName $exePath
-    & $nssmExe set     $serviceName AppDirectory  $targetDir
-    & $nssmExe set     $serviceName AppParameters $appArgs
-}
+    nssm set $serviceName Application    $exePath
     nssm set $serviceName AppDirectory   $targetDir
     nssm set $serviceName AppParameters  $appArgs
 } else {
