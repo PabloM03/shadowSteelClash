@@ -15,12 +15,15 @@ jobs:
       BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
 
     steps:
+      # 0) Obtener código
       - uses: actions/checkout@v3
 
+      # 1) Instalar jq (lo usa el paso bash)
       - name: Ensure jq
-        run: choco install jq -y --no-progress
         shell: powershell
+        run: choco install jq -y --no-progress
 
+      # 2) Limpiar artefactos antiguos en Cloud Build
       - name: Clean Cloud-Build artifacts
         shell: powershell
         run: |
@@ -37,6 +40,7 @@ jobs:
               }
           }
 
+      # 3) Obtener la URL del último build correcto
       - name: Get last build URL
         id: url
         shell: bash
@@ -53,45 +57,45 @@ jobs:
           [ "$LAST" = "null" ] && { echo "::warning::No successful build."; exit 0; }
           DL=$(echo "$JSON" | jq -r --arg n "$LAST" '.[] | select(.buildStatus=="success" and (.build|tostring)==$n) | .links.download_primary.href')
           echo "download_url=$DL" >>"$GITHUB_OUTPUT"
-          echo "build #$LAST -> $DL"
+          echo "Build #$LAST -> $DL"
 
-      - name: Deploy via WinRM (verbose, ASCII)
+      # 4) Copiar y ejecutar deploy.ps1 por WinRM (verbose)
+      - name: Deploy via WinRM (verbose)
         shell: powershell
         env:
-          SERVER_IP:       ${{ secrets.SERVER_IP }}
-          SERVER_USER:     ${{ secrets.SERVER_USER }}
+          SERVER_IP:       ${{ secrets.SERVER_IP }}       # p.ej. 155.248.239.85
+          SERVER_USER:     ${{ secrets.SERVER_USER }}     # opc
           SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
           DOWNLOAD_URL:    ${{ steps.url.outputs.download_url }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # Credentials
+          # Credenciales -------------------------------------------------------
           $sec  = ConvertTo-SecureString $env:SERVER_PASSWORD -AsPlainText -Force
           $cred = [pscredential]::new($env:SERVER_USER, $sec)
 
-          # WinRM session
+          # Sesión WinRM -------------------------------------------------------
           $opt  = New-PSSessionOption -SkipCNCheck -SkipCACheck
           Write-Host "Opening WinRM at $env:SERVER_IP:5986 ..."
           $sess = New-PSSession -ComputerName $env:SERVER_IP -Port 5986 -UseSSL `
                                 -Authentication Basic -Credential $cred `
                                 -SessionOption $opt
 
-          # Remote paths
-          $remoteHome   = Invoke-Command -Session $sess -ScriptBlock { $env:USERPROFILE }
-          $remoteDir    = Join-Path $remoteHome "Desktop\\Deploy"
-          $remoteScript = Join-Path $remoteDir  "deploy.ps1"
+          # Rutas remotas ------------------------------------------------------
+          $remoteHome = Invoke-Command -Session $sess -ScriptBlock { $env:USERPROFILE }
+          $remoteDir  = Join-Path $remoteHome "Desktop\\Deploy"
+          $remoteScript = Join-Path $remoteDir "deploy.ps1"
           $localScript  = Join-Path $env:GITHUB_WORKSPACE ".github\\scripts\\deploy.ps1"
 
           Write-Host "REMOTE USERPROFILE : $remoteHome"
           Write-Host "Destination folder  : $remoteDir"
-          Write-Host "Remote script path  : $remoteScript"
           Write-Host "Local script path   : $localScript"
 
           if (-not (Test-Path $localScript)) {
             throw "Local script not found: $localScript"
           }
 
-          # Ensure folder
+          # Crear la carpeta si no existe
           Invoke-Command -Session $sess -ScriptBlock {
             param($d)
             if (-not (Test-Path $d)) {
@@ -100,19 +104,25 @@ jobs:
             }
           } -ArgumentList $remoteDir
 
-          # Copy script
-          Write-Host "Copying deploy.ps1 ..."
-          Copy-Item -Path $localScript -Destination $remoteScript -ToSession $sess `
+          # Copiar (DESTINO = carpeta)
+          Write-Host "Copying deploy.ps1 into $remoteDir ..."
+          Copy-Item -Path $localScript -Destination $remoteDir -ToSession $sess `
                     -Force -Verbose -ErrorAction Stop
 
-          # Verify copy
-          $ok = Invoke-Command -Session $sess -ScriptBlock { param($p) Test-Path $p } -ArgumentList $remoteScript
-          if (-not $ok) { throw "Copy failed: $remoteScript not found." } else { Write-Host "Script copied successfully." }
+          # Listar contenido para verificar
+          Invoke-Command -Session $sess -ScriptBlock {
+            param($d)
+            Write-Host "Remote dir content:"; Get-ChildItem $d
+          } -ArgumentList $remoteDir
 
-          # Execute
+          # Verificar que existe el archivo
+          $exists = Invoke-Command -Session $sess -ScriptBlock { param($p) Test-Path $p } -ArgumentList $remoteScript
+          if (-not $exists) { throw "Copy failed: $remoteScript not found." }
+
+          # Ejecutar deploy.ps1 ------------------------------------------------
           Write-Host "Running deploy.ps1 with URL = $env:DOWNLOAD_URL"
           Invoke-Command -Session $sess -FilePath $remoteScript -ArgumentList $env:DOWNLOAD_URL
 
-          # Close
+          # Cerrar sesión ------------------------------------------------------
           Remove-PSSession $sess
           Write-Host "WinRM session closed."
