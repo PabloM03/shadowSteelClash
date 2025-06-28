@@ -40,8 +40,7 @@ function Ensure-Choco {
     if (-not (Test-Path $chocoExe)) {  
         Write-Host 'Installing Chocolatey...'  
         Set-ExecutionPolicy Bypass -Scope Process -Force  
-        Invoke-Expression (Invoke-WebRequest `  
-            https://community.chocolatey.org/install.ps1 -UseBasicParsing).Content  
+        Invoke-Expression (Invoke-WebRequest https://community.chocolatey.org/install.ps1 -UseBasicParsing).Content  
     }  
     $dir = Split-Path $chocoExe  
     if (-not ($env:Path -split ';' | Where-Object { $_ -eq $dir })) {  
