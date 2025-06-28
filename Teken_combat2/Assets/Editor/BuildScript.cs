@@ -10,6 +10,7 @@ public static class BuildScript
                       .Where(s => s.enabled)
                       .Select(s => s.path)
                       .ToArray();
+
         if (scenes.Length == 0)
             throw new System.Exception("❌ No hay escenas habilitadas");
 
@@ -20,12 +21,13 @@ public static class BuildScript
             locationPathName = "BuildOutput/windows-server.exe",
             target           = BuildTarget.StandaloneWindows64,
             subtarget        = (int)StandaloneBuildSubtarget.Server,
-            options          = BuildOptions.CompressWithLz4
+            options          = BuildOptions.CompressWithLz4 | BuildOptions.EnableHeadlessMode
         };
 
         var report = BuildPipeline.BuildPlayer(opts);
         if (report.summary.result != BuildResult.Succeeded)
             throw new System.Exception("❌ Build falló");
+
         UnityEngine.Debug.Log("✅ Build servidor listo");
     }
 }
