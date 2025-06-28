@@ -1,29 +1,31 @@
 using UnityEditor;
 using UnityEditor.Build.Reporting;
-using UnityEditor.Build;
+using System.Linq;
 
-public class BuildScript
+public static class BuildScript
 {
-    // Llamado como “Post-Export Method” en Cloud Build
     public static void PerformServerBuild()
     {
-        string buildPath = "BuildOutput/windows-server.exe";
-        string[] scenes  = { "Assets/Scenes/scene1 2.unity" };
+        var scenes = EditorBuildSettings.scenes
+                      .Where(s => s.enabled)
+                      .Select(s => s.path)
+                      .ToArray();
+        if (scenes.Length == 0)
+            throw new System.Exception("❌ No hay escenas habilitadas");
 
-        var opts = new BuildPlayerOptions
-        {
-            scenes             = scenes,
-            locationPathName   = buildPath,
-            target             = BuildTarget.StandaloneWindows64,
-            subtarget          = (int)StandaloneBuildSubtarget.Server,   // Dedicated Server
-            options            = BuildOptions.CompressWithLz4
+        PlayerSettings.runInBackground = true;
+
+        var opts = new BuildPlayerOptions {
+            scenes           = scenes,
+            locationPathName = "BuildOutput/windows-server.exe",
+            target           = BuildTarget.StandaloneWindows64,
+            subtarget        = (int)StandaloneBuildSubtarget.Server,
+            options          = BuildOptions.CompressWithLz4
         };
 
-        BuildReport report = BuildPipeline.BuildPlayer(opts);
-
-        if (report.summary.result == BuildResult.Succeeded)
-            UnityEngine.Debug.Log("✅ Build servidor Windows listo: " + buildPath);
-        else
-            throw new System.Exception("❌ Build de servidor falló");
+        var report = BuildPipeline.BuildPlayer(opts);
+        if (report.summary.result != BuildResult.Succeeded)
+            throw new System.Exception("❌ Build falló");
+        UnityEngine.Debug.Log("✅ Build servidor listo");
     }
 }
