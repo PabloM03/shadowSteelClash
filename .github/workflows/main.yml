@@ -6,7 +6,7 @@ on:
 
 jobs:
   deploy-server:
-    runs-on: windows-2019
+    runs-on: windows-2022
 
     env:
       UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
