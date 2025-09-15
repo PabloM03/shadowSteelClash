@@ -1,65 +1,55 @@
-name: Deploy Existing Unity Build
+name: Deploy Linux Build to Server
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     env:
-      BUILD_DIR: builds
       ZIP_NAME: linux-server.zip
       DEPLOY_PATH: ~/deploy
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: Verify build exists
+      - name: 🔍 Verificar que el ZIP existe
         run: |
-          if [ ! -f "${BUILD_DIR}/TekenCombat2.x86_64" ]; then
-            echo "❌ No existe el ejecutable en ${BUILD_DIR}/TekenCombat2.x86_64"
+          if [ ! -f builds/${{ env.ZIP_NAME }} ]; then
+            echo "❌ Build ZIP no encontrado en builds/${{ env.ZIP_NAME }}"
             exit 1
           fi
 
-      - name: Prepare LinuxServer folder for zip
-        run: |
-          mkdir -p temp/LinuxServer
-          cp -r ${BUILD_DIR}/TekenCombat2.x86_64 temp/LinuxServer/
-          cp -r ${BUILD_DIR}/UnityPlayer.so temp/LinuxServer/
-          cp -r ${BUILD_DIR}/libdecor-0.so.0 temp/LinuxServer/
-          cp -r ${BUILD_DIR}/libdecor-cairo.so temp/LinuxServer/
-          cp -r ${BUILD_DIR}/TekenCombat2_Data temp/LinuxServer/
-          cp -r "${BUILD_DIR}/ShadowSteel clash_BurstDebugInformation_DoNotShip" temp/LinuxServer/
-
-      - name: Create ZIP of build
-        run: |
-          cd temp
-          zip -r $ZIP_NAME LinuxServer
-          mv $ZIP_NAME ../${BUILD_DIR}/
-
-      - name: Upload to server via SCP
+      - name: 📦 Subir el ZIP al servidor (SCP)
         uses: appleboy/scp-action@v0.1.4
         with:
-          host: ${{ secrets.SERVER_HOST }}
+          host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
-          source: "${{ env.BUILD_DIR }}/${{ env.ZIP_NAME }}"
+          source: "builds/${{ env.ZIP_NAME }}"
           target: "${{ env.DEPLOY_PATH }}"
 
-      - name: Restart systemd service via SSH
+      - name: 🔁 Desplegar y reiniciar el servicio en el servidor
         uses: appleboy/ssh-action@v1.0.0
         with:
-          host: ${{ secrets.SERVER_HOST }}
+          host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            unzip -o ~/deploy/${{ env.ZIP_NAME }} -d ~/deploy/
-            chmod +x ~/deploy/LinuxServer/TekenCombat2.x86_64
+            echo "📦 Descomprimiendo el build..."
+            unzip -o ${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }} -d ${{ env.DEPLOY_PATH }}/LinuxServer
+
+            echo "🔐 Dando permisos de ejecución..."
+            chmod +x ${{ env.DEPLOY_PATH }}/LinuxServer/TekenCombat2.x86_64
+
+            echo "🚀 Reiniciando el servicio systemd..."
+            sudo systemctl daemon-reload
             sudo systemctl restart tekencombat.service
+
+            echo "✅ Despliegue completado correctamente."
