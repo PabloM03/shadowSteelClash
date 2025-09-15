@@ -27,3 +27,9 @@ UserSettings/
 sysinfo.txt
 .vscode/
 .vs/
+
+
+# Excepciones para builds específicos
+/builds/*
+!builds/linux/TekenCombat2.x86_64
+

@@ -1,0 +1,29 @@
+
+-------------------------------------------------------------------------------
+   ROBOCOPY     ::     Herramienta para copia eficaz de archivos         
+-------------------------------------------------------------------------------
+
+  Iniciado : lunes, 25 de agosto de 2025 10:39:28
+   Origen : C:\Program Files\Unity\Hub\Editor\6000.0.29f1\
+     Destino : C:\Users\Pablom03\Desktop\unity_proyects\Teken_combat2\Teken_combat2\Unity_Editor\
+
+    Archivos: *.*
+	    
+  Opciones: *.* /NDL /NFL /S /E /DCOPY:DA /COPY:DAT /ZB /NP /MT:16 /R:3 /W:5 
+
+------------------------------------------------------------------------------
+
+
+------------------------------------------------------------------------------
+
+               Total   Copiado   OmitidoNo coincidencia     ERROR    Extras
+Director.:     14408     14408         0         0         0         0
+ Archivos:     96843     96843         0         0         0         0
+    Bytes:  16.013 g  16.013 g         0         0         0         0
+   Tiempo:   0:13:55   0:00:50                       0:00:00   0:00:03
+
+
+Velocidad:           339.644.290 Bytes/s
+Velocidad:             19434,602 Megabytes/min
+   Finalizado: lunes, 25 de agosto de 2025 10:40:22
+

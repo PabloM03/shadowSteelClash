@@ -1,127 +1,89 @@
-name: Deploy Unity Server (auto desde Cloud Build)
+name: Build and Deploy Unity Project
 
 on:
-  repository_dispatch:
-    types: [unity-build-complete]
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
-  deploy-server:
-    runs-on: windows-2022
-
+  build-and-deploy:
+    runs-on: ubuntu-latest
     env:
-      UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
-      ORG_ID:          ${{ secrets.ORG_ID }}
-      PROJECT_ID:      ${{ secrets.PROJECT_ID }}
-      BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
+      BUILD_FOLDER: Build/LinuxServer
+      BUILD_NAME: TekenCombat2.x86_64
+      ZIP_NAME: linux-server.zip
 
     steps:
-      - uses: actions/checkout@v3                      # 0) checkout
+      - name: Checkout Repository
+        uses: actions/checkout@v3
 
-      - name: Ensure jq                                # 1) jq
-        shell: powershell
-        run: choco install jq -y --no-progress
+      - name: Login to GHCR
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Clean Cloud-Build artifacts              # 2) borrar builds viejos
-        shell: powershell
+      - name: Pull Unity Docker Image
+        run: docker pull ghcr.io/${{ github.repository_owner }}/unity-build:latest
+
+      - name: Activate Unity License
         run: |
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          $api  = "https://build-api.cloud.unity3d.com/api/v1/orgs/$env:ORG_ID/projects/$env:PROJECT_ID/buildtargets/$env:BUILD_TARGET/builds"
-          $all  = Invoke-RestMethod -Uri $api -Headers @{Authorization="Basic $env:UNITY_API_TOKEN"}
-          $succ = $all | Where-Object buildStatus -eq success | ForEach-Object build | Sort-Object
-          if ($succ) {
-            $latest = $succ[-1]
-            $succ | Where-Object { $_ -ne $latest } | ForEach-Object {
-              Invoke-RestMethod -Method Delete -Uri "$api/$_/artifacts" -Headers @{Authorization="Basic $env:UNITY_API_TOKEN"}
-            }
-          }
+          docker run --rm \
+            -e UNITY_EMAIL=${{ secrets.UNITY_EMAIL }} \
+            -e UNITY_PASSWORD=${{ secrets.UNITY_PASSWORD }} \
+            ghcr.io/${{ github.repository_owner }}/unity-build:latest \
+            -batchmode -nographics -quit \
+            -logFile /dev/stdout \
+            -username $UNITY_EMAIL \
+            -password $UNITY_PASSWORD
 
-      - name: Get last build URL                       # 3) obtener URL
-        id: url
-        shell: bash
-        env:
-          UNITY_API_TOKEN: ${{ secrets.UNITY_API_TOKEN }}
-          ORG_ID:          ${{ secrets.ORG_ID }}
-          PROJECT_ID:      ${{ secrets.PROJECT_ID }}
-          BUILD_TARGET:    ${{ secrets.BUILD_TARGET }}
+      - name: Build Unity Project
         run: |
-          set -euo pipefail
-          API="https://build-api.cloud.unity3d.com/api/v1/orgs/${ORG_ID}/projects/${PROJECT_ID}/buildtargets/${BUILD_TARGET}/builds"
-          JSON=$(curl -s -H "Authorization: Basic ${UNITY_API_TOKEN}" "$API")
-          LAST=$(echo "$JSON" | jq 'map(select(.buildStatus=="success")) | max_by(.build) | .build')
-          [ "$LAST" = "null" ] && { echo "::warning::No successful build."; exit 0; }
-          DL=$(echo "$JSON" | jq -r --arg n "$LAST" '.[] | select(.buildStatus=="success" and (.build|tostring)==$n) | .links.download_primary.href')
-          echo "download_url=$DL" >>"$GITHUB_OUTPUT"
-          echo "Build #$LAST -> $DL"
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            ghcr.io/${{ github.repository_owner }}/unity-build:latest \
+            -batchmode -nographics -quit \
+            -projectPath /workspace \
+            -executeMethod BuildServer.BuildLinuxServer
 
-      - name: Deploy via WinRM (verbose)               # 4) copia + deploy
-        shell: powershell
-        env:
-          SERVER_IP:       ${{ secrets.SERVER_IP }}     # 155.248.239.85
-          SERVER_USER:     ${{ secrets.SERVER_USER }}   # opc
-          SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
-          DOWNLOAD_URL:    ${{ steps.url.outputs.download_url }}
+      - name: Set execute permission for Linux binary
         run: |
-          #===== Verbose y errores =========================
-          $VerbosePreference = 'Continue'
-          $ErrorActionPreference = 'Stop'
+          chmod +x "${{ env.BUILD_FOLDER }}/${{ env.BUILD_NAME }}"
 
-          #===== Credenciales ==============================
-          $sec  = ConvertTo-SecureString $env:SERVER_PASSWORD -AsPlainText -Force
-          $cred = New-Object pscredential ($env:SERVER_USER, $sec)
+      - name: Zip the Build
+        run: |
+          cd ${{ env.BUILD_FOLDER }}/.. && \
+          zip -r ${{ env.ZIP_NAME }} LinuxServer
+          mkdir -p ${{ github.workspace }}/builds
+          mv ${{ env.ZIP_NAME }} ${{ github.workspace }}/builds/
 
-          #===== Sesion WinRM ==============================
-          $opt  = New-PSSessionOption -SkipCNCheck -SkipCACheck
-          Write-Host ">> Opening WinRM at $env:SERVER_IP:5986 ..."
-          $sess = New-PSSession -ComputerName $env:SERVER_IP -Port 5986 -UseSSL `
-                                -Authentication Basic -Credential $cred `
-                                -SessionOption $opt
+      - name: Upload Build to Server via SSH
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: 22
+          source: "builds/linux-server.zip"
+          target: "~/deploy"
 
-          #===== Rutas remotas =============================
-          $remoteHome   = Invoke-Command -Session $sess -ScriptBlock { $env:USERPROFILE }
-          $remoteDir    = Join-Path $remoteHome 'Desktop\Deploy'
-          $remoteScript = Join-Path $remoteDir  'deploy.ps1'
-          $localScript  = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\deploy.ps1'
+      - name: Restart Systemd Service on Server
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: 22
+          script: |
+            unzip -o ~/deploy/linux-server.zip -d ~/deploy/LinuxServer
+            chmod +x ~/deploy/LinuxServer/${{ env.BUILD_NAME }}
+            sudo systemctl restart tekencombat.service
 
-          Write-Host "REMOTE USERPROFILE : $remoteHome"
-          Write-Host "Destination folder  : $remoteDir"
-          Write-Host "Remote script       : $remoteScript"
-          Write-Host "Local script        : $localScript"
-
-          if (-not (Test-Path $localScript)) {
-            throw "Local script not found: $localScript"
-          }
-
-          #===== Crear carpeta si falta ====================
-          Invoke-Command -Session $sess -ScriptBlock {
-            param($d)
-            if (-not (Test-Path $d)) {
-              New-Item -ItemType Directory -Path $d -Force | Out-Null
-              Write-Host "Created folder $d"
-            }
-          } -ArgumentList $remoteDir
-
-          #===== Copiar ====================================
-          Write-Host ">> Copying deploy.ps1 into $remoteDir ..."
-          Copy-Item -Path $localScript -Destination $remoteDir -ToSession $sess -Force -Verbose
-
-          #===== Listar y verificar ========================
-          Invoke-Command -Session $sess -ScriptBlock {
-            param($d)
-            Write-Host 'Remote dir content:'; Get-ChildItem $d
-          } -ArgumentList $remoteDir
-
-          $exists = Invoke-Command -Session $sess -ScriptBlock { param($p) Test-Path $p } -ArgumentList $remoteScript
-          if (-not $exists) { throw "Copy failed: $remoteScript not found." }
-
-          #===== Ejecutar script remoto ====================
-          Write-Host ">> Running deploy.ps1 with URL:"
-          Write-Host $env:DOWNLOAD_URL
-          Invoke-Command -Session $sess -ScriptBlock {
-            param($script,$url)
-            Write-Host "Inside remote session. Executing $script ..."
-            & $script $url
-          } -ArgumentList $remoteScript,$env:DOWNLOAD_URL
-
-          #===== Cerrar ====================================
-          Remove-PSSession $sess
-          Write-Host "WinRM session closed."
+      - name: Return Unity License
+        if: always()
+        run: |
+          docker run --rm \
+            ghcr.io/${{ github.repository_owner }}/unity-build:latest \
+            -returnlicense

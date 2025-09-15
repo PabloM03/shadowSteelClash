@@ -1,33 +1,22 @@
 using UnityEditor;
-using UnityEditor.Build.Reporting;
-using System.Linq;
+using UnityEngine;
 
-public static class BuildScript
+public class BuildServer
 {
-    public static void PerformServerBuild()
+    [MenuItem("Build/Server Build")]
+    public static void BuildLinuxServer()
     {
-        var scenes = EditorBuildSettings.scenes
-                      .Where(s => s.enabled)
-                      .Select(s => s.path)
-                      .ToArray();
+        string buildPath = "Build/LinuxServer/TekenCombat2.x86_64";
 
-        if (scenes.Length == 0)
-            throw new System.Exception("❌ No hay escenas habilitadas");
-
-        PlayerSettings.runInBackground = true;
-
-        var opts = new BuildPlayerOptions {
-            scenes           = scenes,
-            locationPathName = "BuildOutput/windows-server.exe",
-            target           = BuildTarget.StandaloneWindows64,
-            subtarget        = (int)StandaloneBuildSubtarget.Server,
-            options          = BuildOptions.CompressWithLz4 | BuildOptions.EnableHeadlessMode
+        BuildPlayerOptions buildOptions = new BuildPlayerOptions
+        {
+            scenes = new[] { "Assets/Scenes/scene1 2.unity" }, // Ajusta tus escenas
+            locationPathName = buildPath,
+            target = BuildTarget.StandaloneLinux64,
+            options = BuildOptions.EnableHeadlessMode
         };
 
-        var report = BuildPipeline.BuildPlayer(opts);
-        if (report.summary.result != BuildResult.Succeeded)
-            throw new System.Exception("❌ Build falló");
-
-        UnityEngine.Debug.Log("✅ Build servidor listo");
+        BuildPipeline.BuildPlayer(buildOptions);
+        Debug.Log("✅ Build de Linux Server completado: " + buildPath);
     }
 }
