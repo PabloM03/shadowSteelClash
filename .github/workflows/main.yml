@@ -29,14 +29,12 @@ jobs:
 
       # ✅ Calcular checksum local
       - name: Calculate local checksum
-        id: checksum
         run: |
           sha256sum ${{ env.ZIP_NAME }} | awk '{print $1}' > local_checksum.txt
-          echo "LOCAL_SUM=$(cat local_checksum.txt)" >> $GITHUB_ENV
 
-      # ✅ Obtener checksum remoto (si existe)
+      # ✅ Obtener checksum remoto si existe
       - name: Get remote checksum
-        id: remote_check
+        id: get_remote_checksum
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.SERVER_IP }}
@@ -45,12 +43,11 @@ jobs:
           port: 22
           script: |
             if [ -f "${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }}" ]; then
-              sha256sum "${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }}" | awk '{print $1}' > remote_checksum.txt
-              cat remote_checksum.txt
+              sha256sum "${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }}" | awk '{print $1}' > ${{ env.DEPLOY_PATH }}/remote_checksum.txt
+              cat ${{ env.DEPLOY_PATH }}/remote_checksum.txt
             else
-              echo "NO_REMOTE_FILE" > remote_checksum.txt
+              echo "NO_REMOTE_FILE" > ${{ env.DEPLOY_PATH }}/remote_checksum.txt
             fi
-          script_stop: false
 
       # ✅ Descargar el checksum remoto
       - name: Download remote checksum
@@ -63,7 +60,7 @@ jobs:
           source: "${{ env.DEPLOY_PATH }}/remote_checksum.txt"
           target: "."
 
-      # ✅ Comparar checksums y decidir si subir o no
+      # ✅ Comparar checksums
       - name: Compare checksums
         id: compare
         run: |
@@ -73,14 +70,14 @@ jobs:
           echo "🔍 Remote: $REMOTE"
           if [ "$LOCAL" = "$REMOTE" ]; then
             echo "skip_deploy=true" >> $GITHUB_OUTPUT
-            echo "✅ El build es idéntico al del servidor. No se subirá."
+            echo "✅ El build es idéntico. No se despliega."
           else
             echo "skip_deploy=false" >> $GITHUB_OUTPUT
-            echo "🚀 El build es diferente. Procediendo al despliegue..."
+            echo "🚀 El build ha cambiado. Se procederá al despliegue."
           fi
 
-      # ✅ Subir solo si el build ha cambiado
-      - name: Upload ZIP to server via SCP
+      # ✅ Subir ZIP y checksum SOLO si el ZIP ha cambiado
+      - name: Upload ZIP and checksum to server
         if: steps.compare.outputs.skip_deploy == 'false'
         uses: appleboy/scp-action@v0.1.4
         with:
@@ -88,11 +85,13 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
-          source: "${{ env.ZIP_NAME }}"
+          source: |
+            linux-server.zip
+            local_checksum.txt
           target: "${{ env.DEPLOY_PATH }}"
 
-      # ✅ Descomprimir y reiniciar systemd solo si el build ha cambiado
-      - name: Unzip and restart systemd service
+      # ✅ Reemplazar ZIP y reiniciar systemd solo si ha cambiado
+      - name: Unzip and restart service
         if: steps.compare.outputs.skip_deploy == 'false'
         uses: appleboy/ssh-action@v1.0.0
         with:
@@ -101,9 +100,9 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            echo "📂 Descomprimiendo build en ${{ env.DEPLOY_PATH }}/LinuxServer..."
+            echo "🗃️  Desempaquetando build..."
             unzip -o ${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }} -d ${{ env.DEPLOY_PATH }}/LinuxServer
-            echo "🔒 Asignando permisos al ejecutable..."
+            echo "🔒 Dando permisos al ejecutable..."
             chmod +x ${{ env.DEPLOY_PATH }}/LinuxServer/TekenCombat2.x86_64
             echo "🔁 Reiniciando servicio..."
             sudo systemctl restart tekencombat.service
