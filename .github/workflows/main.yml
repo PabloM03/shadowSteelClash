@@ -1,17 +1,7 @@
-name: Deploy Linux Server Build
+name: Deploy Unity Build
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
-
-env:
-  ZIP_NAME: linux-server.zip
-  BUILD_DIR: builds
-  # Usa ruta ABSOLUTA, nada de "~"
-  DEPLOY_PATH: /home/${{ secrets.SERVER_USER }}/deploy
-  EXECUTABLE_PATH: /home/${{ secrets.SERVER_USER }}/deploy/LinuxServer/TekenCombat2.x86_64
 
 jobs:
   deploy:
@@ -21,7 +11,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Copiar todo el build de Unity al servidor
+      # Subir build al servidor en carpeta temporal
       - name: Upload Unity build to server
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -31,12 +21,16 @@ jobs:
           source: "builds/*"
           target: "/home/${{ secrets.SERVER_USER }}/deploy"
 
-      # Reiniciar el servicio systemd (ya configurado en el servidor)
-      - name: Restart Unity service
+      # Mover build a la carpeta del servicio y reiniciar
+      - name: Deploy and restart service
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            sudo systemctl restart teken.service
+            sudo systemctl stop tekencombat.service || true
+            rm -rf /home/${{ secrets.SERVER_USER }}/tekencombat/*
+            cp -r /home/${{ secrets.SERVER_USER }}/deploy/* /home/${{ secrets.SERVER_USER }}/tekencombat/
+            sudo systemctl daemon-reload
+            sudo systemctl start tekencombat.service
