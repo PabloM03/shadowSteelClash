@@ -9,7 +9,7 @@ on:
 env:
   ZIP_NAME: linux-server.zip
   BUILD_DIR: builds
-  DEPLOY_PATH: ~/deploy
+  DEPLOY_PATH: /home/${{ secrets.SERVER_USER }}/deploy
 
 jobs:
   deploy:
@@ -19,22 +19,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # ✅ Empaquetar el build SIEMPRE
       - name: Zip the build folder
         run: |
-          echo "📦 Empaquetando build en ${{ env.ZIP_NAME }}"
+          echo "📦 Empaquetando build..."
           cd ${{ env.BUILD_DIR }}
           zip -r ../${{ env.ZIP_NAME }} ./*
           cd ..
 
-      # ✅ Calcular checksum local
       - name: Calculate local checksum
-        run: |
-          sha256sum ${{ env.ZIP_NAME }} | awk '{print $1}' > local_checksum.txt
+        run: sha256sum ${{ env.ZIP_NAME }} | awk '{print $1}' > local_checksum.txt
 
-      # ✅ Obtener checksum remoto si existe
-      - name: Get remote checksum
-        id: get_remote_checksum
+      # ✅ Verificar si existe el checksum remoto
+      - name: Check if remote checksum exists
+        id: check_remote
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.SERVER_IP }}
@@ -42,15 +39,23 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            if [ -f "${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }}" ]; then
-              sha256sum "${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }}" | awk '{print $1}' > ${{ env.DEPLOY_PATH }}/remote_checksum.txt
-              cat ${{ env.DEPLOY_PATH }}/remote_checksum.txt
+            if [ -f "${{ env.DEPLOY_PATH }}/remote_checksum.txt" ]; then
+              echo "CHECKSUM_EXISTS=true" >> /tmp/env_export
             else
-              echo "NO_REMOTE_FILE" > ${{ env.DEPLOY_PATH }}/remote_checksum.txt
+              echo "CHECKSUM_EXISTS=false" >> /tmp/env_export
             fi
+            cat /tmp/env_export
+        continue-on-error: true
 
-      # ✅ Descargar el checksum remoto
+      - name: Set output flag for checksum
+        id: flags
+        run: |
+          CHECKSUM_EXISTS=$(grep CHECKSUM_EXISTS /tmp/env_export | cut -d'=' -f2)
+          echo "checksum_exists=$CHECKSUM_EXISTS" >> $GITHUB_OUTPUT
+
+      # ✅ Solo si existe el checksum remoto, lo descargamos
       - name: Download remote checksum
+        if: steps.flags.outputs.checksum_exists == 'true'
         uses: appleboy/scp-action@v0.1.4
         with:
           host: ${{ secrets.SERVER_IP }}
@@ -60,9 +65,10 @@ jobs:
           source: "${{ env.DEPLOY_PATH }}/remote_checksum.txt"
           target: "."
 
-      # ✅ Comparar checksums
+      # ✅ Solo si existe el checksum remoto, comparamos
       - name: Compare checksums
         id: compare
+        if: steps.flags.outputs.checksum_exists == 'true'
         run: |
           LOCAL=$(cat local_checksum.txt)
           REMOTE=$(cat remote_checksum.txt || echo "NO_REMOTE_FILE")
@@ -73,12 +79,12 @@ jobs:
             echo "✅ El build es idéntico. No se despliega."
           else
             echo "skip_deploy=false" >> $GITHUB_OUTPUT
-            echo "🚀 El build ha cambiado. Se procederá al despliegue."
+            echo "🚀 El build ha cambiado. Se desplegará."
           fi
 
-      # ✅ Subir ZIP y checksum SOLO si el ZIP ha cambiado
-      - name: Upload ZIP and checksum to server
-        if: steps.compare.outputs.skip_deploy == 'false'
+      # ✅ Subir siempre si no hay checksum. O si hay y ha cambiado.
+      - name: Upload ZIP and checksum
+        if: steps.flags.outputs.checksum_exists == 'false' || steps.compare.outputs.skip_deploy == 'false'
         uses: appleboy/scp-action@v0.1.4
         with:
           host: ${{ secrets.SERVER_IP }}
@@ -90,9 +96,9 @@ jobs:
             local_checksum.txt
           target: "${{ env.DEPLOY_PATH }}"
 
-      # ✅ Reemplazar ZIP y reiniciar systemd solo si ha cambiado
+      # ✅ Reemplazar y reiniciar siempre si no hay checksum o si hay cambios
       - name: Unzip and restart service
-        if: steps.compare.outputs.skip_deploy == 'false'
+        if: steps.flags.outputs.checksum_exists == 'false' || steps.compare.outputs.skip_deploy == 'false'
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.SERVER_IP }}
@@ -100,6 +106,8 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
+            echo "📂 Creando carpeta si no existe..."
+            mkdir -p ${{ env.DEPLOY_PATH }}/LinuxServer
             echo "🗃️  Desempaquetando build..."
             unzip -o ${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }} -d ${{ env.DEPLOY_PATH }}/LinuxServer
             echo "🔒 Dando permisos al ejecutable..."
@@ -107,3 +115,5 @@ jobs:
             echo "🔁 Reiniciando servicio..."
             sudo systemctl restart tekencombat.service
             sudo systemctl status tekencombat.service --no-pager
+            echo "💾 Guardando checksum remoto..."
+            mv ${{ env.DEPLOY_PATH }}/local_checksum.txt ${{ env.DEPLOY_PATH }}/remote_checksum.txt
