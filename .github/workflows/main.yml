@@ -8,7 +8,6 @@ on:
 
 env:
   BUILD_DIR: builds
-  DEPLOY_PATH: /home/${{ secrets.SERVER_USER }}/deploy
   SERVICE_PATH: /home/${{ secrets.SERVER_USER }}/tekencombat
   EXECUTABLE: TekenCombat2.x86_64
 
@@ -20,30 +19,25 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Subir build al servidor en carpeta temporal
+      # Subir build directamente a la carpeta del servicio
       - name: Upload Unity build to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "${{ env.BUILD_DIR }}/**"
-          target: "${{ env.DEPLOY_PATH }}"
+          source: "${{ env.BUILD_DIR }}/*"
+          target: "${{ env.SERVICE_PATH }}"
 
-      # Mover build, dar permisos y reiniciar servicio
-      - name: Deploy and restart service
+      # Dar permisos de ejecución y reiniciar el servicio
+      - name: Restart Unity service
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            sudo systemctl stop tekencombat.service || true
-            rm -rf ${{ env.SERVICE_PATH }}/*
-            # Copiar SOLO el contenido de deploy (no la carpeta builds entera)
-            cp -r ${{ env.DEPLOY_PATH }}/* ${{ env.SERVICE_PATH }}/
-            # Asignar permisos de ejecución al binario
             sudo chmod +x ${{ env.SERVICE_PATH }}/${{ env.EXECUTABLE }}
             sudo systemctl daemon-reload
-            sudo systemctl start tekencombat.service
+            sudo systemctl restart tekencombat.service
             sudo systemctl status --no-pager tekencombat.service
