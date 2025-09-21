@@ -19,14 +19,14 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Subir build directamente a la carpeta del servicio
+      # Subir SOLO el contenido de builds/ (sin la carpeta builds)
       - name: Upload Unity build to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "${{ env.BUILD_DIR }}/*"
+          source: "${{ env.BUILD_DIR }}/**"
           target: "${{ env.SERVICE_PATH }}"
 
       # Dar permisos de ejecución y reiniciar el servicio
@@ -37,6 +37,8 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            # Asegurarse de que existe el ejecutable
+            ls -l ${{ env.SERVICE_PATH }}
             sudo chmod +x ${{ env.SERVICE_PATH }}/${{ env.EXECUTABLE }}
             sudo systemctl daemon-reload
             sudo systemctl restart tekencombat.service
