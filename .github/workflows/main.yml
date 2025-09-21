@@ -18,120 +18,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - name: Ensure zip is installed
-        run: sudo apt-get update && sudo apt-get install -y zip
-
-      # 📦 Empaquetar SIEMPRE el contenido de builds/ a linux-server.zip en la raíz del repo
-      - name: Zip the build folder (always)
-        run: |
-          echo "📦 Empaquetando build en ${{ env.ZIP_NAME }} (contenido de '${{ env.BUILD_DIR }}')"
-          mkdir -p "${{ env.BUILD_DIR }}"
-          cd "${{ env.BUILD_DIR }}"
-          # Si no hay archivos, zip igual crea un contenedor vacío (evita que falle el scp)
-          zip -r "../${{ env.ZIP_NAME }}" ./* || zip -r "../${{ env.ZIP_NAME }}" .
-          cd ..
-
-      - name: Calculate local checksum
-        run: sha256sum "${{ env.ZIP_NAME }}" | awk '{print $1}' > local_checksum.txt
-
-      # 🖥️ En el servidor: asegura carpeta, produce SIEMPRE los ficheros remotos de estado
-      - name: Prepare remote state and compute remote checksum
-        id: get_remote
-        uses: appleboy/ssh-action@v1.0.0
+      # Copiar todo el build de Unity al servidor
+      - name: Upload Unity build to server
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
+          source: "builds/*"
+          target: "/home/${{ secrets.SERVER_USER }}/deploy"
+
+      # Reiniciar el servicio systemd (ya configurado en el servidor)
+      - name: Restart Unity service
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            set -e
-            mkdir -p "${{ env.DEPLOY_PATH }}"
-            if [ -f "${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }}" ]; then
-              sha256sum "${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }}" | awk '{print $1}' > "${{ env.DEPLOY_PATH }}/remote_checksum.txt"
-            else
-              echo "NO_REMOTE_FILE" > "${{ env.DEPLOY_PATH }}/remote_checksum.txt"
-            fi
-
-            if [ -f "${{ env.EXECUTABLE_PATH }}" ]; then
-              echo "EXECUTABLE_PRESENT=true" > "${{ env.DEPLOY_PATH }}/remote_exec_check.txt"
-            else
-              echo "EXECUTABLE_PRESENT=false" > "${{ env.DEPLOY_PATH }}/remote_exec_check.txt"
-            fi
-
-      # ⬇️ Trae SIEMPRE los dos ficheros de estado (ahora existen seguro)
-      - name: Download remote checksum & executable status
-        uses: appleboy/scp-action@v0.1.4
-        with:
-          host: ${{ secrets.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          source: |
-            ${{ env.DEPLOY_PATH }}/remote_checksum.txt
-            ${{ env.DEPLOY_PATH }}/remote_exec_check.txt
-          target: .
-
-      # 🔍 Decide si desplegar:
-      # - Se despliega si: NO_REMOTE_FILE || EXECUTABLE_PRESENT=false || checksums distintos
-      - name: Compare checksums and decide
-        id: compare
-        run: |
-          set -e
-          LOCAL=$(cat local_checksum.txt)
-          REMOTE=$(cat remote_checksum.txt || echo "NO_REMOTE_FILE")
-          EXEC_OK=$(cat remote_exec_check.txt || echo "EXECUTABLE_PRESENT=false")
-
-          echo "🔍 Local Checksum:  $LOCAL"
-          echo "🔍 Remote Checksum: $REMOTE"
-          echo "🔍 Executable OK?:  $EXEC_OK"
-
-          if [[ "$REMOTE" == "NO_REMOTE_FILE" || "$EXEC_OK" == "EXECUTABLE_PRESENT=false" ]]; then
-            echo "skip_deploy=false" >> $GITHUB_OUTPUT
-            echo "🚨 No hay ZIP previo o falta ejecutable. Se desplegará."
-          elif [ "$LOCAL" = "$REMOTE" ]; then
-            echo "skip_deploy=true" >> $GITHUB_OUTPUT
-            echo "✅ El build es idéntico y el ejecutable existe. No se despliega."
-          else
-            echo "skip_deploy=false" >> $GITHUB_OUTPUT
-            echo "🚀 El build ha cambiado. Se desplegará."
-          fi
-
-      # ⬆️ Sube ZIP y checksum solo si hace falta
-      - name: Upload ZIP and checksum
-        if: steps.compare.outputs.skip_deploy == 'false'
-        uses: appleboy/scp-action@v0.1.4
-        with:
-          host: ${{ secrets.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          source: |
-            ${{ env.ZIP_NAME }}
-            local_checksum.txt
-          target: "${{ env.DEPLOY_PATH }}"
-
-      # 🧩 Desempaqueta, permisos y reinicio service solo si hace falta
-      - name: Unzip and restart systemd service
-        if: steps.compare.outputs.skip_deploy == 'false'
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host: ${{ secrets.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          script: |
-            set -e
-            sudo apt-get update -y && sudo apt-get install -y unzip
-            echo "🗃️  Desempaquetando build en ${{ env.DEPLOY_PATH }}/LinuxServer"
-            mkdir -p "${{ env.DEPLOY_PATH }}/LinuxServer"
-            unzip -o "${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }}" -d "${{ env.DEPLOY_PATH }}/LinuxServer"
-            echo "🔒 Permisos de ejecución…"
-            chmod +x "${{ env.EXECUTABLE_PATH }}"
-            echo "🔁 Reiniciando servicio…"
-            sudo systemctl restart tekencombat.service
-            sudo systemctl status tekencombat.service --no-pager
-            echo "💾 Consolidando checksum remoto…"
-            mv -f "${{ env.DEPLOY_PATH }}/local_checksum.txt" "${{ env.DEPLOY_PATH }}/remote_checksum.txt"
+            sudo systemctl restart teken.service
