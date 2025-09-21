@@ -9,7 +9,8 @@ on:
 env:
   ZIP_NAME: linux-server.zip
   BUILD_DIR: builds
-  DEPLOY_PATH: /home/${{ secrets.SERVER_USER }}/deploy
+  DEPLOY_PATH: ~/deploy
+  EXECUTABLE_PATH: ~/deploy/LinuxServer/TekenCombat2.x86_64
 
 jobs:
   deploy:
@@ -19,19 +20,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      # ✅ Empaquetar el build SIEMPRE
       - name: Zip the build folder
         run: |
-          echo "📦 Empaquetando build..."
+          echo "📦 Empaquetando build en ${{ env.ZIP_NAME }}"
           cd ${{ env.BUILD_DIR }}
           zip -r ../${{ env.ZIP_NAME }} ./*
           cd ..
 
+      # ✅ Calcular checksum local
       - name: Calculate local checksum
-        run: sha256sum ${{ env.ZIP_NAME }} | awk '{print $1}' > local_checksum.txt
+        run: |
+          sha256sum ${{ env.ZIP_NAME }} | awk '{print $1}' > local_checksum.txt
 
-      # ✅ Verificar si existe el checksum remoto
-      - name: Check if remote checksum exists
-        id: check_remote
+      # ✅ Obtener checksum remoto y verificar ejecutable
+      - name: Get remote checksum & check executable
+        id: get_remote
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.SERVER_IP }}
@@ -39,52 +43,21 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            if [ -f "${{ env.DEPLOY_PATH }}/remote_checksum.txt" ]; then
-              echo "CHECKSUM_EXISTS=true" >> /tmp/env_export
+            mkdir -p ${{ env.DEPLOY_PATH }}
+            if [ -f "${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }}" ]; then
+              sha256sum "${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }}" | awk '{print $1}' > ${{ env.DEPLOY_PATH }}/remote_checksum.txt
             else
-              echo "CHECKSUM_EXISTS=false" >> /tmp/env_export
+              echo "NO_REMOTE_FILE" > ${{ env.DEPLOY_PATH }}/remote_checksum.txt
             fi
-            cat /tmp/env_export
-        continue-on-error: true
 
-      - name: Set output flag for checksum
-        id: flags
-        run: |
-          CHECKSUM_EXISTS=$(grep CHECKSUM_EXISTS /tmp/env_export | cut -d'=' -f2)
-          echo "checksum_exists=$CHECKSUM_EXISTS" >> $GITHUB_OUTPUT
+            if [ -f "${{ env.EXECUTABLE_PATH }}" ]; then
+              echo "EXECUTABLE_PRESENT=true" > ${{ env.DEPLOY_PATH }}/remote_exec_check.txt
+            else
+              echo "EXECUTABLE_PRESENT=false" > ${{ env.DEPLOY_PATH }}/remote_exec_check.txt
+            fi
 
-      # ✅ Solo si existe el checksum remoto, lo descargamos
-      - name: Download remote checksum
-        if: steps.flags.outputs.checksum_exists == 'true'
-        uses: appleboy/scp-action@v0.1.4
-        with:
-          host: ${{ secrets.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          source: "${{ env.DEPLOY_PATH }}/remote_checksum.txt"
-          target: "."
-
-      # ✅ Solo si existe el checksum remoto, comparamos
-      - name: Compare checksums
-        id: compare
-        if: steps.flags.outputs.checksum_exists == 'true'
-        run: |
-          LOCAL=$(cat local_checksum.txt)
-          REMOTE=$(cat remote_checksum.txt || echo "NO_REMOTE_FILE")
-          echo "🔍 Local:  $LOCAL"
-          echo "🔍 Remote: $REMOTE"
-          if [ "$LOCAL" = "$REMOTE" ]; then
-            echo "skip_deploy=true" >> $GITHUB_OUTPUT
-            echo "✅ El build es idéntico. No se despliega."
-          else
-            echo "skip_deploy=false" >> $GITHUB_OUTPUT
-            echo "🚀 El build ha cambiado. Se desplegará."
-          fi
-
-      # ✅ Subir siempre si no hay checksum. O si hay y ha cambiado.
-      - name: Upload ZIP and checksum
-        if: steps.flags.outputs.checksum_exists == 'false' || steps.compare.outputs.skip_deploy == 'false'
+      # ✅ Descargar archivos remotos para comparar
+      - name: Download remote checksum & executable status
         uses: appleboy/scp-action@v0.1.4
         with:
           host: ${{ secrets.SERVER_IP }}
@@ -92,13 +65,50 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           source: |
-            linux-server.zip
+            ${{ env.DEPLOY_PATH }}/remote_checksum.txt
+            ${{ env.DEPLOY_PATH }}/remote_exec_check.txt
+          target: .
+
+      # ✅ Comparar checksums y decidir si desplegar
+      - name: Compare checksums and decide
+        id: compare
+        run: |
+          LOCAL=$(cat local_checksum.txt)
+          REMOTE=$(cat remote_checksum.txt || echo "NO_REMOTE_FILE")
+          EXEC_OK=$(cat remote_exec_check.txt || echo "EXECUTABLE_PRESENT=false")
+
+          echo "🔍 Local Checksum: $LOCAL"
+          echo "🔍 Remote Checksum: $REMOTE"
+          echo "🔍 Executable Exists on Server: $EXEC_OK"
+
+          if [[ "$REMOTE" == "NO_REMOTE_FILE" || "$EXEC_OK" == "EXECUTABLE_PRESENT=false" ]]; then
+            echo "skip_deploy=false" >> $GITHUB_OUTPUT
+            echo "🚨 No hay ZIP remoto o falta ejecutable. Se desplegará."
+          elif [ "$LOCAL" = "$REMOTE" ]; then
+            echo "skip_deploy=true" >> $GITHUB_OUTPUT
+            echo "✅ El build es idéntico y el ejecutable existe. No se desplegará."
+          else
+            echo "skip_deploy=false" >> $GITHUB_OUTPUT
+            echo "🚀 El build ha cambiado. Se desplegará."
+          fi
+
+      # ✅ Subir ZIP y checksum SOLO si es necesario
+      - name: Upload ZIP and checksum
+        if: steps.compare.outputs.skip_deploy == 'false'
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          source: |
+            ${{ env.ZIP_NAME }}
             local_checksum.txt
           target: "${{ env.DEPLOY_PATH }}"
 
-      # ✅ Reemplazar y reiniciar siempre si no hay checksum o si hay cambios
-      - name: Unzip and restart service
-        if: steps.flags.outputs.checksum_exists == 'false' || steps.compare.outputs.skip_deploy == 'false'
+      # ✅ Descomprimir ZIP y reiniciar el servicio SOLO si es necesario
+      - name: Unzip and restart systemd service
+        if: steps.compare.outputs.skip_deploy == 'false'
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.SERVER_IP }}
@@ -106,14 +116,12 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            echo "📂 Creando carpeta si no existe..."
-            mkdir -p ${{ env.DEPLOY_PATH }}/LinuxServer
             echo "🗃️  Desempaquetando build..."
             unzip -o ${{ env.DEPLOY_PATH }}/${{ env.ZIP_NAME }} -d ${{ env.DEPLOY_PATH }}/LinuxServer
+
             echo "🔒 Dando permisos al ejecutable..."
             chmod +x ${{ env.DEPLOY_PATH }}/LinuxServer/TekenCombat2.x86_64
+
             echo "🔁 Reiniciando servicio..."
             sudo systemctl restart tekencombat.service
             sudo systemctl status tekencombat.service --no-pager
-            echo "💾 Guardando checksum remoto..."
-            mv ${{ env.DEPLOY_PATH }}/local_checksum.txt ${{ env.DEPLOY_PATH }}/remote_checksum.txt
