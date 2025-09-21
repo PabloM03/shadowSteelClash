@@ -1,7 +1,17 @@
-name: Deploy Unity Build
+name: Deploy Linux Server Build
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
+
+env:
+  ZIP_NAME: linux-server.zip
+  BUILD_DIR: builds
+  # Usa ruta ABSOLUTA, nada de "~"
+  DEPLOY_PATH: /home/${{ secrets.SERVER_USER }}/deploy
+  EXECUTABLE_PATH: /home/${{ secrets.SERVER_USER }}/deploy/LinuxServer/TekenCombat2.x86_64
 
 jobs:
   deploy:
