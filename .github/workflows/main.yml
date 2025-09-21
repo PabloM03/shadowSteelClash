@@ -27,7 +27,7 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "${{ env.BUILD_DIR }}/*"
+          source: "${{ env.BUILD_DIR }}/**"
           target: "${{ env.DEPLOY_PATH }}"
 
       # Mover build, dar permisos y reiniciar servicio
@@ -40,7 +40,10 @@ jobs:
           script: |
             sudo systemctl stop tekencombat.service || true
             rm -rf ${{ env.SERVICE_PATH }}/*
+            # Copiar SOLO el contenido de deploy (no la carpeta builds entera)
             cp -r ${{ env.DEPLOY_PATH }}/* ${{ env.SERVICE_PATH }}/
+            # Asignar permisos de ejecución al binario
             sudo chmod +x ${{ env.SERVICE_PATH }}/${{ env.EXECUTABLE }}
             sudo systemctl daemon-reload
             sudo systemctl start tekencombat.service
+            sudo systemctl status --no-pager tekencombat.service
