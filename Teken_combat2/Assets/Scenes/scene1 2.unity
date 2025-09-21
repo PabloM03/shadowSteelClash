@@ -6318,7 +6318,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e49645b7595aedc44abad868868d6af0, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  startAsServer: 0
+  startAsServer: 1
 --- !u!1 &923113628
 GameObject:
   m_ObjectHideFlags: 0
