@@ -19,7 +19,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Subir SOLO el contenido de builds/ (sin la carpeta builds)
+      # Subir SOLO contenido de builds/, no la carpeta builds entera
       - name: Upload Unity build to server
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -28,8 +28,9 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "${{ env.BUILD_DIR }}/**"
           target: "${{ env.SERVICE_PATH }}"
+          strip_components: 1
 
-      # Dar permisos de ejecución y reiniciar el servicio
+      # Dar permisos y reiniciar el servicio
       - name: Restart Unity service
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -37,7 +38,6 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Asegurarse de que existe el ejecutable
             ls -l ${{ env.SERVICE_PATH }}
             sudo chmod +x ${{ env.SERVICE_PATH }}/${{ env.EXECUTABLE }}
             sudo systemctl daemon-reload
