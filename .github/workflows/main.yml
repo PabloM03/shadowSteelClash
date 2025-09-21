@@ -7,11 +7,10 @@ on:
   workflow_dispatch:
 
 env:
-  ZIP_NAME: linux-server.zip
   BUILD_DIR: builds
-  # Usa ruta ABSOLUTA, nada de "~"
   DEPLOY_PATH: /home/${{ secrets.SERVER_USER }}/deploy
-  EXECUTABLE_PATH: /home/${{ secrets.SERVER_USER }}/deploy/LinuxServer/TekenCombat2.x86_64
+  SERVICE_PATH: /home/${{ secrets.SERVER_USER }}/tekencombat
+  EXECUTABLE: TekenCombat2.x86_64
 
 jobs:
   deploy:
@@ -28,10 +27,10 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "builds/*"
-          target: "/home/${{ secrets.SERVER_USER }}/deploy"
+          source: "${{ env.BUILD_DIR }}/*"
+          target: "${{ env.DEPLOY_PATH }}"
 
-      # Mover build a la carpeta del servicio y reiniciar
+      # Mover build, dar permisos y reiniciar servicio
       - name: Deploy and restart service
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -40,7 +39,8 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             sudo systemctl stop tekencombat.service || true
-            rm -rf /home/${{ secrets.SERVER_USER }}/tekencombat/*
-            cp -r /home/${{ secrets.SERVER_USER }}/deploy/* /home/${{ secrets.SERVER_USER }}/tekencombat/
+            rm -rf ${{ env.SERVICE_PATH }}/*
+            cp -r ${{ env.DEPLOY_PATH }}/* ${{ env.SERVICE_PATH }}/
+            sudo chmod +x ${{ env.SERVICE_PATH }}/${{ env.EXECUTABLE }}
             sudo systemctl daemon-reload
             sudo systemctl start tekencombat.service
