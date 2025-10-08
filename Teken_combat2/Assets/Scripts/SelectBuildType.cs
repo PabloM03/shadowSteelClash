@@ -1,31 +1,44 @@
 using UnityEngine;
 using Mirror;
+using UnityEngine.SceneManagement;
 
 public class SelectBuildType : MonoBehaviour
 {
     [SerializeField]
     private bool startAsServer = false; // Set this to true for server mode, false for client mode
 
-    void Start()
+    private void OnEnable()
     {
-        // Automatically start as server or client based on the configuration
-        if (startAsServer)
-        {
-            Debug.Log("Iniciando como Servidor...");
-            NetworkManager.singleton.StartServer();
-        }
-        else
-        {
-            Debug.Log("Iniciando como Cliente...");
-            NetworkManager.singleton.StartClient();
-        }
+        SceneManager.sceneLoaded += OnSceneLoaded;
+    }
 
-        // Desactiva el NetworkManagerHUD si está presente
-        var networkManagerHUD = FindObjectOfType<NetworkManagerHUD>();
-        if (networkManagerHUD != null)
+    private void OnDisable()
+    {
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+    }
+
+    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        // Cambia "NombreDeTuEscena" por el nombre real de tu escena
+        if (scene.name == "scene1 2")
         {
-            networkManagerHUD.enabled = false;
-            Debug.Log("NetworkManagerHUD desactivado");
+            if (startAsServer)
+            {
+                Debug.Log("Iniciando como Servidor...");
+                NetworkManager.singleton.StartServer();
+            }
+            else
+            {
+                Debug.Log("Iniciando como Cliente...");
+                NetworkManager.singleton.StartClient();
+            }
+
+            var networkManagerHUD = FindObjectOfType<NetworkManagerHUD>();
+            if (networkManagerHUD != null)
+            {
+                networkManagerHUD.enabled = false;
+                Debug.Log("NetworkManagerHUD desactivado");
+            }
         }
     }
 }
