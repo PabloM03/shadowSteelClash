@@ -3711,8 +3711,20 @@ MonoBehaviour:
   syncDirection: 0
   syncMode: 0
   syncInterval: 0
-  showButtons: 0
   cameraTransform: {fileID: 0}
+  rotationSpeed: 360
+  attack1Button: {fileID: 0}
+  attack2Button: {fileID: 0}
+  jumpButton: {fileID: 0}
+  dodgeButton: {fileID: 0}
+  kickButton: {fileID: 0}
+  crouchButton: {fileID: 0}
+  turnRightButton: {fileID: 0}
+  turnLeftButton: {fileID: 0}
+  shieldButton: {fileID: 0}
+  lanchWarrokButton: {fileID: 0}
+  joystick: {fileID: 0}
+  showButtons: 0
 --- !u!114 &35049652217434899
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3883,7 +3895,7 @@ RectTransform:
   m_GameObject: {fileID: 8154793608370206032}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 0.72, y: 0.58, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 983212777078725580}

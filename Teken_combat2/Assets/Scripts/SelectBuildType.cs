@@ -17,6 +17,14 @@ public class SelectBuildType : MonoBehaviour
         SceneManager.sceneLoaded -= OnSceneLoaded;
     }
 
+    private void Start()
+    {
+        if (SceneManager.GetActiveScene().name == "scene1 2")
+        {
+            OnSceneLoaded(SceneManager.GetActiveScene(), LoadSceneMode.Single);
+        }
+    }
+    
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
         // Cambia "NombreDeTuEscena" por el nombre real de tu escena

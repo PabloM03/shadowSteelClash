@@ -2,139 +2,361 @@ using UnityEngine;
 using Mirror;
 using System.Collections;
 using UnityEngine.Animations;
+using UnityEngine.UI;
 
+/// <summary>
+/// KnightController (clean merge + retro-compat cameraTransform)
+/// - Mantiene la lógica original de la V1 (teclado) y añade la UI/joystick de la V2.
+/// - Unifica entradas: teclado y canvas provocan exactamente los mismos flags/animaciones.
+/// - Conserva giros alrededor del centro con A/D (y botones TurnLeft/Right) y el movimiento/orientación con flechas (y joystick).
+/// - Añadido: public Transform cameraTransform para no romper referencias externas (online.cs).
+/// </summary>
 public class KnightController : NetworkBehaviour
 {
+    [Header("Core")]
     private Animator animator;
     private Rigidbody rb;
-    private Vector3 center = Vector3.zero; // Centro del círculo en (0,0)
 
-    // Variables de acción
-    private bool isAttacking;
-    private bool isJumping;
-    private bool isDefending;
+    // ⚠️ Retro-compatibilidad: otros scripts acceden a este campo.
+    [Tooltip("Referencia a la cámara usada para orientar al personaje. Campo expuesto por compatibilidad.")]
+    public Transform cameraTransform;
+
+    // Interno (alias de cameraTransform)
+    private Transform cam;
+
+    private Vector3 arenaCenter = Vector3.zero;
+
+    [Header("Rotation")]
+    [Tooltip("Velocidad de rotación en grados/segundo (yaw only).")]
+    private float rotationSpeed = 150f;
+
+    // --------- Estado de acciones ----------
+    private bool anyButton;
+    private bool hasShield;
+    private bool turnBack;
     private bool isRunning;
-    private bool isCrouching;
-    private bool isAttacking2;
-    private bool kick;
-    private bool dodge;
     private bool isWalkingBackward;
     private bool isJoystickRight;
     private bool isJoystickLeft;
-    private bool moveRight;
-    private bool moveLeft;
-    private bool anyButton = false;
-    public bool showButtons = false;
-    private bool hasShield = false;
-    private bool TurnBack = false;
 
-    public Transform cameraTransform; // La cámara para obtener su dirección
-    private float rotationSpeed = 1f; // Velocidad de rotación
+    // Memoria de inputs para detectar cambio de sentido (como V1)
+    private float prevH, prevV;
 
-    private float previousHorizontal = 0;
-    private float previousVertical = 0;
-
+    // Corrutina para pulsos de bool->false
     private Coroutine triggerRoutine;
 
-    void Start()
+    [Header("UI (opcional)")]
+    public Button attack1Button;
+    public Button attack2Button;
+    public Button jumpButton;
+    public Button dodgeButton;
+    public Button kickButton;
+    public Button crouchButton;     // requiere UIButtonHold para hold
+    public Button turnRightButton;  // requiere UIButtonHold para hold
+    public Button turnLeftButton;   // requiere UIButtonHold para hold
+    public Button shieldButton;     // requiere UIButtonHold para hold
+    public Button lanchWarrokButton;// placeholder
+    public VirtualJoystick joystick; // opcional
+
+    // Componentes hold (si existen)
+    private UIButtonHold crouchHold;
+    private UIButtonHold turnRightHold;
+    private UIButtonHold turnLeftHold;
+    private UIButtonHold shieldHold;
+
+    [Header("Debug")]
+    public bool showButtons = false;
+
+    // --------- Estructura de entradas unificadas ----------
+    private struct InputState
     {
-        cameraTransform = Camera.main.transform;
+        // Pulsos/Triggers
+        public bool attack1;
+        public bool attack2;
+        public bool jump;
+        public bool dodge;
+        public bool kick;
+
+        // Holds / Bools
+        public bool defend;   // escudo
+        public bool crouch;
+        public bool turnRightAroundCenter;
+        public bool turnLeftAroundCenter;
+
+        // Movimiento/orientación (analog)
+        public float axisH; // Horizontal (flechas / joystick)
+        public float axisV; // Vertical   (flechas / joystick)
+    }
+
+    // --------- Ciclo de vida ----------
+    private void Start()
+    {
+        // Si no está asignada por Inspector, tomar la principal
+        if (cameraTransform == null && Camera.main != null)
+            cameraTransform = Camera.main.transform;
+
+        // Mantener alias interno sincronizado
+        cam = cameraTransform;
+
         animator = GetComponent<Animator>();
         rb = GetComponent<Rigidbody>();
 
-        if (!GetComponent<online>())
+        // Seguir al jugador en modo offline (mismo comportamiento que V1)
+        if (!GetComponent<online>() && Camera.main)
         {
-            Camera.main.GetComponent<CameraFollow>().target = transform;
+            var cf = Camera.main.GetComponent<CameraFollow>();
+            if (cf) cf.target = transform;
         }
 
-        LookAtConstraint lookAt = GetComponentInChildren<LookAtConstraint>();
-        ConstraintSource source = new ConstraintSource();
-        source.sourceTransform = cameraTransform;
-        source.weight = 1;
-        lookAt.SetSource(0, source);  
-        
+        // LookAtConstraint como en V1
+        var lookAt = GetComponentInChildren<LookAtConstraint>();
+        if (lookAt && cameraTransform)
+        {
+            var source = new ConstraintSource { sourceTransform = cameraTransform, weight = 1f };
+            lookAt.SetSource(0, source);
+        }
+
+        // Intentar tomar bindings desde ButtonBindings si no fueron asignados
+        TryWireUIFromSingleton();
+
+        // Suscribir triggers de click (no-hold)
+        if (attack1Button) attack1Button.onClick.AddListener(() => { TriggerBool("AttackBool"); anyButton = true; });
+        if (attack2Button) attack2Button.onClick.AddListener(() => { TriggerBool("Attack2Bool"); anyButton = true; });
+        if (jumpButton)    jumpButton.onClick.AddListener(() => { TriggerBool("JumpBool");   anyButton = true; });
+        if (dodgeButton)   dodgeButton.onClick.AddListener(() => { TriggerBool("dodgeBool"); anyButton = true; });
+        if (kickButton)    kickButton.onClick.AddListener(() => { TriggerBool("kickBool");   anyButton = true; });
+        if (lanchWarrokButton) lanchWarrokButton.onClick.AddListener(() => { anyButton = true; /* placeholder */ });
+
+        // Capturar holds (si existen)
+        crouchHold    = crouchButton    ? crouchButton.GetComponent<UIButtonHold>()    : null;
+        turnRightHold = turnRightButton ? turnRightButton.GetComponent<UIButtonHold>() : null;
+        turnLeftHold  = turnLeftButton  ? turnLeftButton.GetComponent<UIButtonHold>()  : null;
+        shieldHold    = shieldButton    ? shieldButton.GetComponent<UIButtonHold>()    : null;
+        if (crouchButton && !crouchHold)       Debug.LogWarning("crouchButton requiere UIButtonHold para funcionar como hold.");
+        if (turnRightButton && !turnRightHold) Debug.LogWarning("turnRightButton requiere UIButtonHold para funcionar como hold.");
+        if (turnLeftButton && !turnLeftHold)   Debug.LogWarning("turnLeftButton requiere UIButtonHold para funcionar como hold.");
+        if (shieldButton && !shieldHold)       Debug.LogWarning("shieldButton requiere UIButtonHold para funcionar como hold.");
     }
 
-    void Update()
+    private void Update()
     {
-        if (!(GetComponent<NetworkIdentity>() && (!(isLocalPlayer || (isServer && isLocalPlayer)))))
+        // Mantener alias por si se re-asigna cameraTransform en runtime
+        if (cam != cameraTransform) cam = cameraTransform;
+
+        if (!IsControllable())
+            return;
+
+        if (!animator || !animator.enabled)
+            return;
+
+        anyButton = false;
+        animator.ResetTrigger("kick"); // compat legado
+
+        // 1) Leer entradas unificadas (teclado + UI)
+        var input = ReadUnifiedInput();
+
+        // 2) Animaciones de triggers como en V1
+        ApplyTriggers(input);
+
+        // 3) Bools de animación (defensa, crouch, laterales que giran alrededor del centro)
+        ApplyBools(input);
+
+        // 4) Movimiento/orientación (flechas / joystick) con misma semántica de V1
+        HandleMovementLikeV1(input);
+
+        // 5) TurnBack (como V1)
+        DetectTurnBack(input.axisH, input.axisV);
+
+        // 6) AnyButton
+        animator.SetBool("AnyButton", anyButton);
+
+        if (showButtons && (input.attack1 || input.attack2))
+            Debug.Log("Botón de ataque activado");
+    }
+
+    // --------- Helpers principales ----------
+    private bool IsControllable()
+    {
+        // Igualar comportamiento original: si no hay NetworkIdentity -> se controla
+        // Si hay NetworkIdentity, sólo el local player controla
+        var ni = GetComponent<NetworkIdentity>();
+        if (!ni) return true;
+        return isLocalPlayer || (isServer && isLocalPlayer);
+    }
+
+    private InputState ReadUnifiedInput()
+    {
+        InputState s = default;
+
+        // --- Teclado (igual que V1) ---
+        s.attack1 = Input.GetKeyDown(KeyCode.Alpha1);
+        s.attack2 = Input.GetKeyDown(KeyCode.Alpha2);
+        s.dodge   = Input.GetKeyDown(KeyCode.Q);
+        s.jump    = Input.GetKeyDown(KeyCode.Space);
+        s.kick    = Input.GetKey(KeyCode.E);
+
+        // Defensa (escudo) y crouch por teclado
+        bool kbDefend = Input.GetKey(KeyCode.W);
+        bool kbCrouch = Input.GetKey(KeyCode.S);
+
+        // Giros alrededor del centro (A/D)
+        bool kbTurnRight = Input.GetKey(KeyCode.D);
+        bool kbTurnLeft  = Input.GetKey(KeyCode.A);
+
+        // Ejes de movimiento/orientación con flechas (como V1)
+        float h = 0f, v = 0f;
+        if (Input.GetKey(KeyCode.RightArrow)) h =  1f;
+        else if (Input.GetKey(KeyCode.LeftArrow))  h = -1f;
+
+        if (Input.GetKey(KeyCode.UpArrow))    v =  1f;
+        else if (Input.GetKey(KeyCode.DownArrow))  v = -1f;
+
+        // --- UI (Canvas) ---
+        // Holds desde botones (si existen)
+        bool uiCrouch = crouchHold && crouchHold.isHeld;
+        bool uiTurnR  = turnRightHold && turnRightHold.isHeld;
+        bool uiTurnL  = turnLeftHold  && turnLeftHold.isHeld;
+        bool uiDefend = shieldHold && shieldHold.isHeld;
+
+        // Joystick virtual (si está y hay entrada significativa)
+        if (joystick)
         {
-            anyButton = false;
-            animator.ResetTrigger("kick");
-            if (!animator.enabled) return;
-            HandleButtons();
-            HandleMovement();
-            DetectTurnBack();
-            if (!isDefending) hasShield = false;
+            float jh = joystick.Horizontal;
+            float jv = joystick.Vertical;
+            if (Mathf.Abs(jh) > 0.01f || Mathf.Abs(jv) > 0.01f)
+            {
+                h = jh;
+                v = jv;
+            }
+        }
+
+        // Fusión teclado + UI: los holds se combinan por OR
+        s.defend   = kbDefend || uiDefend;
+        s.crouch   = kbCrouch || uiCrouch;
+        s.turnRightAroundCenter = kbTurnRight || uiTurnR;
+        s.turnLeftAroundCenter  = kbTurnLeft  || uiTurnL;
+
+        s.axisH = h;
+        s.axisV = v;
+
+        return s;
+    }
+
+    private void ApplyTriggers(InputState s)
+    {
+        if (s.attack1) { TriggerBool("AttackBool"); anyButton = true; }
+        if (s.attack2) { TriggerBool("Attack2Bool"); anyButton = true; }
+        if (s.jump)    { TriggerBool("JumpBool");    anyButton = true; }
+        if (s.dodge)   { TriggerBool("dodgeBool");   anyButton = true; }
+        if (s.kick)    { TriggerBool("kickBool");    anyButton = true; }
+    }
+
+    private void ApplyBools(InputState s)
+    {
+        // Escudo / crouch / laterales (A/D o botones) -> exacto a V1
+        animator.SetBool("isDefending", s.defend);
+        animator.SetBool("Crouch",      s.crouch);
+
+        animator.SetBool("MoveRight",   s.turnRightAroundCenter);
+        animator.SetBool("MoveLeft",    s.turnLeftAroundCenter);
+
+        // Si se mantienen A/D (o sus botones), se orienta al centro
+        if (s.turnRightAroundCenter || s.turnLeftAroundCenter)
+            OrientTowardsCenter();
+
+        // AnyButton si cualquier cosa está activa (como V1)
+        if (s.defend || s.crouch || s.turnRightAroundCenter || s.turnLeftAroundCenter ||
+            Mathf.Abs(s.axisH) + Mathf.Abs(s.axisV) > 0.1f)
+            anyButton = true;
+    }
+
+    private void HandleMovementLikeV1(InputState s)
+    {
+        // Flags de “joystick lateral” (para anim) con umbral
+        isJoystickRight = s.axisH > 0.5f;
+        isJoystickLeft  = s.axisH < -0.5f;
+
+        animator.SetBool("isJoystickRight", isJoystickRight);
+        animator.SetBool("isJoystickLeft",  isJoystickLeft);
+
+        if (Mathf.Abs(s.axisH) > 0f || Mathf.Abs(s.axisV) > 0f)
+        {
+            // Dirección base en plano XZ como en V1
+            Vector3 dir = new Vector3(s.axisH, 0f, s.axisV).normalized;
+
+            // En V1 se transformaba por la cámara y se anulaba Y
+            if (cameraTransform)
+            {
+                dir = cameraTransform.TransformDirection(dir);
+                dir.y = 0f;
+            }
+
+            // Lógica V1: vertical > 0 -> correr; vertical < 0 -> retroceder
+            if (s.axisV > 0.1f)
+            {
+                isRunning = true;
+                isWalkingBackward = false;
+            }
+            else if (s.axisV < -0.1f)
+            {
+                isRunning = false;
+                isWalkingBackward = true;
+
+                // En V1, si no había joystick lateral (derecha/izquierda) se invertía la dirección
+                if (!(isJoystickRight || isJoystickLeft))
+                    dir = -dir;
+            }
+            else
+            {
+                isRunning = false;
+                isWalkingBackward = false;
+            }
+
+            // Rotación yaw-only hacia la dirección objetivo
+            if (dir.sqrMagnitude > 0.0001f)
+            {
+                Quaternion target = Quaternion.LookRotation(dir, Vector3.up);
+                transform.rotation = Quaternion.RotateTowards(transform.rotation, target, rotationSpeed * Time.deltaTime);
+            }
         }
         else
         {
-            return;
-            FireAllTriggersFromBools();
+            isRunning = false;
+            isWalkingBackward = false;
         }
+
+        animator.SetBool("isRunning",         isRunning);
+        animator.SetBool("isWalkingBackward", isWalkingBackward);
     }
 
-    private void HandleButtons()
+    private void DetectTurnBack(float h, float v)
     {
-        isAttacking = Input.GetKeyDown(KeyCode.Alpha1);
-        isAttacking2 = Input.GetKeyDown(KeyCode.Alpha2);
-        dodge = Input.GetKeyDown(KeyCode.Q);
-        isJumping = Input.GetKeyDown(KeyCode.Space);
-        isDefending = Input.GetKey(KeyCode.W);
-        kick = Input.GetKey(KeyCode.E);
-        moveRight = Input.GetKey(KeyCode.D);
-        moveLeft = Input.GetKey(KeyCode.A);
-        isCrouching = Input.GetKey(KeyCode.S);
+        bool turnedH = (prevH * h) < 0f;
+        bool turnedV = (prevV * v) < 0f;
 
-        if (isAttacking)
-        {
-            TriggerBool("AttackBool");
-            anyButton = true;
-        }
+        turnBack = turnedH || turnedV;
+        animator.SetBool("TurnBack", turnBack);
 
-        if (isAttacking2)
-        {
-            TriggerBool("Attack2Bool");
-            anyButton = true;
-        }
+        if (Mathf.Abs(h) > 0.0001f) prevH = h;
+        if (Mathf.Abs(v) > 0.0001f) prevV = v;
 
-        if (isJumping)
-        {
-            TriggerBool("JumpBool");
-            anyButton = true;
-        }
-
-        if (dodge)
-        {
-            TriggerBool("dodgeBool");
-            anyButton = true;
-        }
-
-        if (kick)
-        {
-            TriggerBool("kickBool");
-            anyButton = true;
-        }
-
-        animator.SetBool("isDefending", isDefending);
-        animator.SetBool("Crouch", isCrouching);
-        animator.SetBool("MoveRight", moveRight);
-        animator.SetBool("MoveLeft", moveLeft);
-
-        if (isDefending || isCrouching || moveRight || moveLeft || ((Mathf.Abs(Input.GetAxis("Horizontal")) + Mathf.Abs(Input.GetAxis("Vertical"))) > 0.1) || isAttacking || isAttacking2 || isJumping || dodge || kick || TurnBack)
-            anyButton = true;
-
-        animator.SetBool("AnyButton", anyButton);
-
-        if (moveRight || moveLeft)
-        {
-            OrientTowardsCenter();
-        }
+        if (turnBack) anyButton = true;
     }
 
+    private void OrientTowardsCenter()
+    {
+        Vector3 toCenter = arenaCenter - transform.position;
+        toCenter.y = 0f;
+        if (toCenter.sqrMagnitude < 0.0001f) return;
+
+        Quaternion target = Quaternion.LookRotation(toCenter, Vector3.up);
+        transform.rotation = target;
+    }
+
+    // --------- Utilidades de triggers (bool que se apaga) ----------
     private void TriggerBool(string boolName, float duration = 0.1f)
     {
-        if (triggerRoutine != null)
+        if (triggerRoutine != null && false)
             StopCoroutine(triggerRoutine);
 
         triggerRoutine = StartCoroutine(TriggerBoolCoroutine(boolName, duration));
@@ -147,100 +369,60 @@ public class KnightController : NetworkBehaviour
         animator.SetBool(boolName, false);
     }
 
+    // (Se mantiene para compatibilidad si lo llamas en otro sitio)
     private void FireAllTriggersFromBools()
     {
         for (int i = 0; i < animator.parameterCount; i++)
         {
-            AnimatorControllerParameter param = animator.GetParameter(i);
-
-            if (param.type == AnimatorControllerParameterType.Bool && param.name.EndsWith("Bool"))
+            var p = animator.GetParameter(i);
+            if (p.type == AnimatorControllerParameterType.Bool && p.name.EndsWith("Bool"))
             {
-                bool value = animator.GetBool(param.name);
-
-                if (value)
+                bool val = animator.GetBool(p.name);
+                if (val)
                 {
-                    string triggerName = param.name.Substring(0, param.name.Length - 4);
-                    animator.SetTrigger(triggerName);
-                    Debug.Log("Triggering: " + param.name);
-                    Debug.Log("Triggering: " + param.name);
+                    string trigger = p.name.Substring(0, p.name.Length - 4);
+                    animator.SetTrigger(trigger);
+                    Debug.Log("Triggering: " + p.name);
                 }
             }
         }
     }
 
-    private void HandleMovement()
+    // --------- API pública conservada ----------
+    public void shieldActivate() => hasShield = true;
+
+    public bool HasShield(bool orientation) => hasShield && orientation;
+
+    // --------- Wiring de UI desde singleton (opcional) ----------
+    private void TryWireUIFromSingleton()
     {
-        float horizontal = Input.GetKey(KeyCode.RightArrow) ? 1 : Input.GetKey(KeyCode.LeftArrow) ? -1 : 0;
-        float vertical = Input.GetKey(KeyCode.UpArrow) ? 1 : Input.GetKey(KeyCode.DownArrow) ? -1 : 0;
+        if (ButtonBindings.Instance == null) return;
 
-        isJoystickRight = horizontal > 0.9f;
-        isJoystickLeft = horizontal < -0.9f;
+        attack1Button     = attack1Button     ? attack1Button     : ButtonBindings.Instance.attack1Button;
+        attack2Button     = attack2Button     ? attack2Button     : ButtonBindings.Instance.attack2Button;
+        jumpButton        = jumpButton        ? jumpButton        : ButtonBindings.Instance.jumpButton;
+        dodgeButton       = dodgeButton       ? dodgeButton       : ButtonBindings.Instance.dodgeButton;
+        kickButton        = kickButton        ? kickButton        : ButtonBindings.Instance.kickButton;
+        crouchButton      = crouchButton      ? crouchButton      : ButtonBindings.Instance.crouchButton;
+        turnRightButton   = turnRightButton   ? turnRightButton   : ButtonBindings.Instance.turnRightButton;
+        turnLeftButton    = turnLeftButton    ? turnLeftButton    : ButtonBindings.Instance.turnLeftButton;
+        shieldButton      = shieldButton      ? shieldButton      : ButtonBindings.Instance.shieldButton;
+        lanchWarrokButton = lanchWarrokButton ? lanchWarrokButton : ButtonBindings.Instance.LanchWarrokButton;
+        joystick          = joystick          ? joystick          : ButtonBindings.Instance.joystick;
 
-        animator.SetBool("isJoystickRight", isJoystickRight);
-        animator.SetBool("isJoystickLeft", isJoystickLeft);
-
-        if (horizontal != 0 || vertical != 0)
-        {
-            Vector3 direction = new Vector3(horizontal, 0, vertical).normalized;
-            direction = cameraTransform.TransformDirection(direction);
-            direction.y = 0;
-
-            if (vertical > 0)
-            {
-                isRunning = true;
-                isWalkingBackward = false;
-            }
-            else if (vertical < 0)
-            {
-                isRunning = false;
-                isWalkingBackward = true;
-                if (!(isJoystickRight || isJoystickLeft)) direction = -direction;
-            }
-
-            Quaternion targetRotation = Quaternion.LookRotation(direction);
-            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
-        }
-        else
-        {
-            isRunning = false;
-            isWalkingBackward = false;
-        }
-
-        animator.SetBool("isRunning", isRunning);
-        animator.SetBool("isWalkingBackward", isWalkingBackward);
-    }
-
-    private void DetectTurnBack()
-    {
-        float horizontal = Input.GetKey(KeyCode.RightArrow) ? 1 : Input.GetKey(KeyCode.LeftArrow) ? -1 : 0;
-        float vertical = Input.GetKey(KeyCode.UpArrow) ? 1 : Input.GetKey(KeyCode.DownArrow) ? -1 : 0;
-
-        bool hasTurnedBackHorizontally = (previousHorizontal * horizontal) < 0;
-        bool hasTurnedBackVertically = (previousVertical * vertical) < 0;
-
-        TurnBack = hasTurnedBackHorizontally || hasTurnedBackVertically;
-        animator.SetBool("TurnBack", TurnBack);
-
-        previousHorizontal = horizontal;
-        previousVertical = vertical;
-    }
-
-    private void OrientTowardsCenter()
-    {
-        Vector3 directionToCenter = center - transform.position;
-        directionToCenter.y = 0;
-
-        Quaternion targetRotation = Quaternion.LookRotation(directionToCenter);
-        transform.rotation = targetRotation;
-    }
-
-    public void shieldActivate()
-    {
-        hasShield = true;
-    }
-
-    public bool HasShield(bool orientation)
-    {
-        return hasShield && orientation;
+        // Log de faltantes (opcionales)
+        string miss = "";
+        if (!attack1Button)     miss += "attack1Button ";
+        if (!attack2Button)     miss += "attack2Button ";
+        if (!jumpButton)        miss += "jumpButton ";
+        if (!dodgeButton)       miss += "dodgeButton ";
+        if (!kickButton)        miss += "kickButton ";
+        if (!crouchButton)      miss += "crouchButton ";
+        if (!turnRightButton)   miss += "turnRightButton ";
+        if (!turnLeftButton)    miss += "turnLeftButton ";
+        if (!shieldButton)      miss += "shieldButton ";
+        if (!lanchWarrokButton) miss += "LanchWarrokButton ";
+        if (!string.IsNullOrEmpty(miss))
+            Debug.LogWarning("Botones/joystick no asignados (opcionales): " + miss);
     }
 }

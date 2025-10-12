@@ -17025,7 +17025,7 @@ RectTransform:
   m_GameObject: {fileID: 6078438582275674679}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 0.72, y: 0.4, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 5573183994053219401}
@@ -17215,6 +17215,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   enemies:
   - {fileID: 0}
+  health: 100
   maxHealth: 0
   power: 1
 --- !u!136 &5827258690952608749

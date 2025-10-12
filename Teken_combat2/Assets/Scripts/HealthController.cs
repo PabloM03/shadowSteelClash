@@ -61,7 +61,9 @@ public class HealthController : MonoBehaviour
 	//Debug.Log(defeatedEnemies.Count+ "/" + enemies.Count+"/"+health);
 	if ((defeatedEnemies.Count == enemies.Count))
 	{
-	    animator.SetBool("WIN",true);
+            animator.SetBool("WIN", true);
+            // desactivar barra de vida
+            lifeOfBar.transform.parent.gameObject.SetActive(false);
 	}
 
 	if(health<0 && iddle)
@@ -184,10 +186,24 @@ public class HealthController : MonoBehaviour
     private void Die()
     {
         Debug.Log(this.gameObject.name + " ha muerto.");
-	animator.ResetTrigger("win");
-	animator.SetTrigger("death");
-	live=false;
-	y=0;
+        animator.ResetTrigger("win");
+        animator.SetTrigger("death");
+        live=false;
+        y = 0;
+        // Desactivar el collider para evitar más interacciones
+        Collider collider = GetComponent<Collider>();
+        if (collider != null)
+        {
+            collider.enabled = false;
+        }
+        // Desactivar rigidbody si existe
+        Rigidbody rb = GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.isKinematic = true;
+        }
+        // Desactivar la barra de vida
+        lifeOfBar.transform.parent.gameObject.SetActive(false);
     }
 
     private void finish()
