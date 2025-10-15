@@ -2,6 +2,7 @@ using UnityEngine;
 using System.Collections;
 using System.Collections.Generic; // Necesario para usar List
 using UnityEngine.UI;
+using Mirror;
 
 
 
@@ -16,7 +17,6 @@ public class HealthController : MonoBehaviour
     private bool iddle;
     private bool shield=false;
     private float y;
-    private float duration = 4f;
     public float maxHealth; 
     
     public float Health
@@ -47,24 +47,29 @@ public class HealthController : MonoBehaviour
 
     void Update()
     {
-	foreach (Transform enemy in enemies)
-	{
-            enemyHealth = enemy.GetComponent<HealthController>();
+        foreach (Transform enemy in enemies)
+        {
+                enemyHealth = enemy.GetComponent<HealthController>();
 
-            // Verifica si el enemigo está derrotado y si aún no se ha activado "win" para él
-            if (enemyHealth.Health <= 0 && health > 0 && live && !defeatedEnemies.Contains(enemy))
-            {  
-                animator.SetTrigger("win");
-                defeatedEnemies.Add(enemy); // Marca el enemigo como derrotado
-            }	    
-    }
-	//Debug.Log(defeatedEnemies.Count+ "/" + enemies.Count+"/"+health);
-	if ((defeatedEnemies.Count == enemies.Count))
-	{
+                // Verifica si el enemigo está derrotado y si aún no se ha activado "win" para él
+                if (enemyHealth.Health <= 0 && health > 0 && live && !defeatedEnemies.Contains(enemy))
+                {  
+                    animator.SetTrigger("win");
+                    defeatedEnemies.Add(enemy); // Marca el enemigo como derrotado
+                }	    
+        }
+        //Debug.Log(defeatedEnemies.Count+ "/" + enemies.Count+"/"+health);
+        if ((defeatedEnemies.Count == enemies.Count))
+        {
             animator.SetBool("WIN", true);
             // desactivar barra de vida
-            lifeOfBar.transform.parent.gameObject.SetActive(false);
-	}
+            lifeOfBar.transform.parent.GetComponent<CanvasGroup>().alpha = 0f;
+        }
+        else
+        {
+            animator.SetBool("WIN", false);
+            lifeOfBar.transform.parent.GetComponent<CanvasGroup>().alpha = 1f;
+        }
 
 	if(health<0 && iddle)
 	{
@@ -72,6 +77,9 @@ public class HealthController : MonoBehaviour
 	}
 
 	iddle=false;
+
+        // Intento de resucitar si la vida volvió a ser mayor que 0
+        Resucitate();
 
     }
 
@@ -190,20 +198,43 @@ public class HealthController : MonoBehaviour
         animator.SetTrigger("death");
         live=false;
         y = 0;
-        // Desactivar el collider para evitar más interacciones
-        Collider collider = GetComponent<Collider>();
-        if (collider != null)
-        {
-            collider.enabled = false;
-        }
-        // Desactivar rigidbody si existe
-        Rigidbody rb = GetComponent<Rigidbody>();
-        if (rb != null)
-        {
-            rb.isKinematic = true;
-        }
-        // Desactivar la barra de vida
+        
         lifeOfBar.transform.parent.gameObject.SetActive(false);
+
+        StartCoroutine(DeathAfterDelay());
+
+        IEnumerator DeathAfterDelay()
+        {
+            yield return new WaitForSeconds(3f);
+            // Igualar la rotación X a 180º
+            Vector3 rot = transform.eulerAngles;
+            rot.x = 0f;
+            transform.eulerAngles = rot;
+            // Establece la altura a 0.4 si después de 4 segundos sigue por encima de 0.4
+            if (transform.position.y > 0.4f)
+            {
+                Vector3 pos = transform.position;
+                pos.y = 0.4f;
+                transform.position = pos;
+            }
+            // Desactivar el collider para evitar más interacciones
+            Collider collider = GetComponent<Collider>();
+            if (collider != null)
+            {
+                collider.enabled = false;
+            }
+            // Desactivar rigidbody si existe
+            Rigidbody rb = GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.isKinematic = true;
+            }
+            // Desactivar la barra de vida
+            lifeOfBar.transform.parent.gameObject.SetActive(false);
+
+            // Desactivar NetworkTransformHybrid para evitar problemas de sincronización
+            GetComponent<NetworkTransformHybrid>().enabled = false;
+        }
     }
 
     private void finish()
@@ -255,6 +286,54 @@ public class HealthController : MonoBehaviour
 	animator.ResetTrigger("win");
     }
 
+    // Resucitar si la vida es mayor que 0 y actualmente está marcado como muerto (live == false)
+    public void Resucitate()
+    {
+        if (health > 0 && !live)
+        {
+            // Reactivar NetworkTransformHybrid para la sincronización
+            GetComponent<NetworkTransformHybrid>().enabled = true;
+
+            live = true;
+            // Reactivar animator
+            if (animator != null)
+            {
+                animator.enabled = true;
+                animator.ResetTrigger("death");
+            }
+
+            // Reactivar barra de vida (Canvas/background)
+            if (lifeOfBar != null && lifeOfBar.transform.parent != null)
+            {
+                lifeOfBar.transform.parent.gameObject.SetActive(true);
+            }
+
+            // Reactivar collider
+            Collider col = GetComponent<Collider>();
+            if (col != null)
+            {
+                col.enabled = true;
+            }
+
+            // Reactivar rigidbody
+            Rigidbody rb = GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.isKinematic = false;
+            }
+
+            // Reset flags
+            live = true;
+
+            // Actualizar UI y animator con la nueva vida
+            LifeOfBar();
+            if (animator != null)
+            {
+                animator.SetFloat("health", health);
+            }
+        }
+    }
+
 
     public void LifeOfBar()
     {
@@ -262,9 +341,9 @@ public class HealthController : MonoBehaviour
     }
 
 
-    public void ActivateShield()
+    public void ActivateShield(float duration)
     {
-	StartCoroutine(TemporarilySetTrue(duration)); // Inicia la corutina al inicio
+	    StartCoroutine(TemporarilySetTrue(duration)); // Inicia la corutina al inicio
     }
 
     private IEnumerator TemporarilySetTrue(float seconds)

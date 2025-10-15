@@ -16,8 +16,6 @@ ModelImporter:
     optimizeGameObjects: 0
     removeConstantScaleCurves: 0
     motionNodeName: 
-    rigImportErrors: 
-    rigImportWarnings: 
     animationImportErrors: 
     animationImportWarnings: 
     animationRetargetingWarnings: 
@@ -63,6 +61,13 @@ ModelImporter:
         objectReferenceParameter: {instanceID: 0}
         floatParameter: 0
         intParameter: 1
+        messageOptions: 0
+      - time: 0.09855769
+        functionName: ActivateShield
+        data: 
+        objectReferenceParameter: {instanceID: 0}
+        floatParameter: 0.2
+        intParameter: 0
         messageOptions: 0
       - time: 1
         functionName: ControllerLayer

@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using Mirror;
 
 public class ActivateClient : MonoBehaviour
 {
@@ -13,6 +14,7 @@ public class ActivateClient : MonoBehaviour
     void OnDestroy()
     {
         SceneManager.sceneLoaded -= OnSceneLoaded;
+        NetworkManager.singleton.StopClient();
     }
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)

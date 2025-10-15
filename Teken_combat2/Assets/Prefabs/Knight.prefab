@@ -3712,11 +3712,12 @@ MonoBehaviour:
   syncMode: 0
   syncInterval: 0
   cameraTransform: {fileID: 0}
-  rotationSpeed: 360
+  hasShield: 0
   attack1Button: {fileID: 0}
   attack2Button: {fileID: 0}
   jumpButton: {fileID: 0}
   dodgeButton: {fileID: 0}
+  dodgeButton2: {fileID: 0}
   kickButton: {fileID: 0}
   crouchButton: {fileID: 0}
   turnRightButton: {fileID: 0}
@@ -3725,6 +3726,8 @@ MonoBehaviour:
   lanchWarrokButton: {fileID: 0}
   joystick: {fileID: 0}
   showButtons: 0
+  deadZone: 0.25
+  sensitivity: 0.6
 --- !u!114 &35049652217434899
 MonoBehaviour:
   m_ObjectHideFlags: 0

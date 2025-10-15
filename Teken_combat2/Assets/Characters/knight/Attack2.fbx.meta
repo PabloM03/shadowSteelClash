@@ -64,7 +64,7 @@ ModelImporter:
         messageOptions: 0
       - time: 0.501046
         functionName: ApplyAttack
-        data: 180/0.3/15
+        data: 70/0.2/15
         objectReferenceParameter: {instanceID: 0}
         floatParameter: 0
         intParameter: 0

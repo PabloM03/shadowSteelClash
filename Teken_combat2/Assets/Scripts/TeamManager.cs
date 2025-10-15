@@ -6,6 +6,11 @@ using Mirror;
 
 public class TeamManager : NetworkBehaviour
 {
+    // --- Ajuste para evitar muertes desincronizadas ---
+    // Nunca enviamos 0 directamente a los clientes; enviamos un valor diminuto y
+    // luego confirmamos la muerte con un RPC específico.
+    private const float DeathEpsilon = 0.0001f;
+
     private float lastSentHealth = -1f;
 
     // Diccionario en el servidor con la última vida válida de cada jugador
@@ -45,6 +50,7 @@ public class TeamManager : NetworkBehaviour
         {
             float currentHealth = hc.Health;
 
+            // Solo enviamos al servidor si hay descenso de vida (daño) significativo
             if (Mathf.Abs(currentHealth - lastSentHealth) > 0.1f && currentHealth < lastSentHealth)
             {
                 lastSentHealth = currentHealth;
@@ -53,37 +59,70 @@ public class TeamManager : NetworkBehaviour
         }
     }
 
+    // ===== Helpers de aplicación de vida y refresco de UI en clientes =====
+    private static void ApplyHealthAndRefreshUI(NetworkIdentity knightNi, float newHealth)
+    {
+        var hc = knightNi.GetComponent<HealthController>();
+        if (hc == null) return;
+
+        // Asignamos SIEMPRE y actualizamos SIEMPRE la UI.
+        hc.Health = Mathf.Max(0f, newHealth);
+        hc.LifeOfBar(); // Asegúrate de que esta función SIEMPRE dibuja desde hc.Health
+    }
+
+    // ===== Server: recibe daño del cliente local y propaga de forma segura =====
     [Command]
     private void CmdSendMyHealthToServer(float newHealth)
     {
         HealthController hc = GetComponent<HealthController>();
-        if (hc != null)
+        if (hc == null) return;
+
+        // El servidor es autoridad: actualiza su copia
+        float clamped = Mathf.Max(0f, newHealth);
+        hc.Health = clamped;
+        hc.LifeOfBar();
+
+        // Guarda en el registro del servidor
+        healthRecords[netId] = clamped;
+
+        if (clamped <= 0f)
         {
-            hc.Health = newHealth;
-            hc.LifeOfBar();
+            // Fase 1: propagamos un "casi cero" para que los clientes NO ejecuten muerte aún
+            RpcUpdateHealthToClients(netId, DeathEpsilon);
 
-            // Guarda el valor en el servidor para sincronización futura
-            healthRecords[netId] = newHealth;
-
-            // Reenvía a todos los clientes
-            RpcUpdateHealthToClients(netId, newHealth);
+            // Fase 2: confirmamos muerte explícitamente (cuando toque)
+            RpcConfirmDeath(netId);
+        }
+        else
+        {
+            // Vida normal: propagación directa
+            RpcUpdateHealthToClients(netId, clamped);
         }
     }
 
+    // ===== Broadcast universal de vida (fase de actualización de barra en todos) =====
     [ClientRpc]
     private void RpcUpdateHealthToClients(uint knightNetId, float newHealth)
     {
         if (NetworkClient.spawned.TryGetValue(knightNetId, out NetworkIdentity knightNi))
         {
-            HealthController hc = knightNi.GetComponent<HealthController>();
-            if (hc != null)
-            {
-                hc.Health = newHealth;
-                hc.LifeOfBar();
-            }
+            ApplyHealthAndRefreshUI(knightNi, newHealth);
         }
     }
 
+    // ===== Confirmación explícita de muerte por el servidor =====
+    [ClientRpc]
+    private void RpcConfirmDeath(uint knightNetId)
+    {
+        if (NetworkClient.spawned.TryGetValue(knightNetId, out NetworkIdentity knightNi))
+        {
+            // Ahora sí, ponemos 0 exacto y refrescamos UI; si tu HealthController
+            // dispara la lógica de "muerte" al ver Health<=0, ocurrirá aquí.
+            ApplyHealthAndRefreshUI(knightNi, 0f);
+        }
+    }
+
+    // ===== Re-sync periódico del cliente local =====
     private void RequestServerResync()
     {
         if (isLocalPlayer)
@@ -92,38 +131,67 @@ public class TeamManager : NetworkBehaviour
         }
     }
 
+    // ===== Re-sync puntual de mi vida =====
     [Command]
     private void CmdRequestMyLatestHealth(NetworkConnectionToClient sender = null)
     {
         if (healthRecords.TryGetValue(netId, out float savedHealth))
         {
-            TargetForceHealthSync(sender, netId, savedHealth);
+            // Si el servidor tiene guardado <=0, aplicamos mismo patrón de dos fases
+            if (savedHealth <= 0f)
+            {
+                TargetForceHealthSync(sender, netId, DeathEpsilon);
+                TargetConfirmDeath(sender, netId);
+            }
+            else
+            {
+                TargetForceHealthSync(sender, netId, savedHealth);
+            }
         }
     }
 
+    // ===== Re-sync de todos los jugadores para un cliente concreto =====
     [Command]
     private void CmdRequestAllHealth(NetworkConnectionToClient sender = null)
     {
         foreach (var pair in healthRecords)
         {
-            TargetForceHealthSync(sender, pair.Key, pair.Value);
+            uint kId = pair.Key;
+            float h  = pair.Value;
+
+            if (h <= 0f)
+            {
+                TargetForceHealthSync(sender, kId, DeathEpsilon);
+                // Confirmación de muerte separada
+                TargetConfirmDeath(sender, kId);
+            }
+            else
+            {
+                TargetForceHealthSync(sender, kId, h);
+            }
         }
     }
 
+    // ===== Target RPCs para forzar estado en un cliente específico =====
     [TargetRpc]
     private void TargetForceHealthSync(NetworkConnection target, uint knightNetId, float health)
     {
         if (NetworkClient.spawned.TryGetValue(knightNetId, out NetworkIdentity knightNi))
         {
-            HealthController hc = knightNi.GetComponent<HealthController>();
-            if (hc != null)
-            {
-                hc.Health = health;
-                hc.LifeOfBar();
-            }
+            ApplyHealthAndRefreshUI(knightNi, health);
         }
     }
 
+    [TargetRpc]
+    private void TargetConfirmDeath(NetworkConnection target, uint knightNetId)
+    {
+        if (NetworkClient.spawned.TryGetValue(knightNetId, out NetworkIdentity knightNi))
+        {
+            ApplyHealthAndRefreshUI(knightNi, 0f);
+        }
+    }
+
+    // ===== Asignación de equipos (sin cambios funcionales) =====
     public override void OnStartServer()
     {
         base.OnStartServer();

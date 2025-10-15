@@ -11,6 +11,7 @@ public class ButtonBindings : MonoBehaviour
     public Button attack2Button;
     public Button jumpButton;
     public Button dodgeButton;
+    public Button dodgeButton2;
     public Button kickButton;
     public Button crouchButton;
     public Button turnRightButton;
