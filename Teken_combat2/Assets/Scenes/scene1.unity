@@ -7208,10 +7208,20 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 7568698841334881228, guid: cdc22f90c4b492f4882292766a5dc546,
+        type: 3}
+      propertyPath: m_Enabled
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 7772819458650101420, guid: cdc22f90c4b492f4882292766a5dc546,
         type: 3}
       propertyPath: m_Name
       value: Knight
+      objectReference: {fileID: 0}
+    - target: {fileID: 8154793608370206032, guid: cdc22f90c4b492f4882292766a5dc546,
+        type: 3}
+      propertyPath: m_IsActive
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 8154830341132475293, guid: cdc22f90c4b492f4882292766a5dc546,
         type: 3}

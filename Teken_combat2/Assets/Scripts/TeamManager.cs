@@ -6,16 +6,37 @@ using Mirror;
 
 public class TeamManager : NetworkBehaviour
 {
-    // --- Ajuste para evitar muertes desincronizadas ---
-    // Nunca enviamos 0 directamente a los clientes; enviamos un valor diminuto y
-    // luego confirmamos la muerte con un RPC específico.
+    // --- Ajuste para evitar jitter de 0 exacto en barras antes de confirmar muerte ---
     private const float DeathEpsilon = 0.0001f;
+    private const float HealthDeltaThreshold = 0.01f; // todo cambio real de vida (daño o curación)
 
+    private float lastSendTime = 0f;
     private float lastSentHealth = -1f;
 
-    // Diccionario en el servidor con la última vida válida de cada jugador
-    private static readonly Dictionary<uint, float> healthRecords = new();
+    // Registro maestro en servidor: última vida válida por netId
+    private static readonly Dictionary<uint, float> healthRecords = new Dictionary<uint, float>();
 
+    // ====== Helpers comunes ======
+    private static void ApplyHealthAndRefreshUI(NetworkIdentity knightNi, float newHealth)
+    {
+        var hc = knightNi.GetComponent<HealthController>();
+        if (hc == null) return;
+
+        hc.Health = Mathf.Max(0f, newHealth);
+        hc.LifeOfBar(); // Debe dibujar desde hc.Health SIEMPRE
+    }
+
+    private static void TryColorEnemies(HealthController hc)
+    {
+        if (hc == null) return;
+        foreach (Transform enemy in hc.enemies)
+        {
+            Image bar = enemy.Find("Canvas/background/LifeBar")?.GetComponent<Image>();
+            if (bar != null) bar.color = Color.red;
+        }
+    }
+
+    // ====== Ciclo de vida en cliente ======
     public override void OnStartLocalPlayer()
     {
         base.OnStartLocalPlayer();
@@ -26,11 +47,25 @@ public class TeamManager : NetworkBehaviour
             lastSentHealth = hc.Health;
         }
 
-        // Reintento de sincronización individual
+        // Reintento de sincronización individual (por si hay drift)
         InvokeRepeating(nameof(RequestServerResync), 2f, 5f);
 
-        // Solicitar sincronización completa del estado del servidor
+        // Solicitar sincronización completa del estado a la entrada
         Invoke(nameof(RequestAllPlayersHealth), 1f);
+    }
+
+    public override void OnStartClient()
+    {
+        base.OnStartClient();
+        if (isLocalPlayer)
+        {
+            Invoke(nameof(UpdateLocalEnemyBars), 1f);
+        }
+    }
+
+    private void UpdateLocalEnemyBars()
+    {
+        TryColorEnemies(GetComponent<HealthController>());
     }
 
     private void RequestAllPlayersHealth()
@@ -41,88 +76,6 @@ public class TeamManager : NetworkBehaviour
         }
     }
 
-    private void Update()
-    {
-        if (!isLocalPlayer) return;
-
-        HealthController hc = GetComponent<HealthController>();
-        if (hc != null)
-        {
-            float currentHealth = hc.Health;
-
-            // Solo enviamos al servidor si hay descenso de vida (daño) significativo
-            if (Mathf.Abs(currentHealth - lastSentHealth) > 0.1f && currentHealth < lastSentHealth)
-            {
-                lastSentHealth = currentHealth;
-                CmdSendMyHealthToServer(currentHealth);
-            }
-        }
-    }
-
-    // ===== Helpers de aplicación de vida y refresco de UI en clientes =====
-    private static void ApplyHealthAndRefreshUI(NetworkIdentity knightNi, float newHealth)
-    {
-        var hc = knightNi.GetComponent<HealthController>();
-        if (hc == null) return;
-
-        // Asignamos SIEMPRE y actualizamos SIEMPRE la UI.
-        hc.Health = Mathf.Max(0f, newHealth);
-        hc.LifeOfBar(); // Asegúrate de que esta función SIEMPRE dibuja desde hc.Health
-    }
-
-    // ===== Server: recibe daño del cliente local y propaga de forma segura =====
-    [Command]
-    private void CmdSendMyHealthToServer(float newHealth)
-    {
-        HealthController hc = GetComponent<HealthController>();
-        if (hc == null) return;
-
-        // El servidor es autoridad: actualiza su copia
-        float clamped = Mathf.Max(0f, newHealth);
-        hc.Health = clamped;
-        hc.LifeOfBar();
-
-        // Guarda en el registro del servidor
-        healthRecords[netId] = clamped;
-
-        if (clamped <= 0f)
-        {
-            // Fase 1: propagamos un "casi cero" para que los clientes NO ejecuten muerte aún
-            RpcUpdateHealthToClients(netId, DeathEpsilon);
-
-            // Fase 2: confirmamos muerte explícitamente (cuando toque)
-            RpcConfirmDeath(netId);
-        }
-        else
-        {
-            // Vida normal: propagación directa
-            RpcUpdateHealthToClients(netId, clamped);
-        }
-    }
-
-    // ===== Broadcast universal de vida (fase de actualización de barra en todos) =====
-    [ClientRpc]
-    private void RpcUpdateHealthToClients(uint knightNetId, float newHealth)
-    {
-        if (NetworkClient.spawned.TryGetValue(knightNetId, out NetworkIdentity knightNi))
-        {
-            ApplyHealthAndRefreshUI(knightNi, newHealth);
-        }
-    }
-
-    // ===== Confirmación explícita de muerte por el servidor =====
-    [ClientRpc]
-    private void RpcConfirmDeath(uint knightNetId)
-    {
-        if (NetworkClient.spawned.TryGetValue(knightNetId, out NetworkIdentity knightNi))
-        {
-            // Ahora sí, ponemos 0 exacto y refrescamos UI; si tu HealthController
-            // dispara la lógica de "muerte" al ver Health<=0, ocurrirá aquí.
-            ApplyHealthAndRefreshUI(knightNi, 0f);
-        }
-    }
-
-    // ===== Re-sync periódico del cliente local =====
     private void RequestServerResync()
     {
         if (isLocalPlayer)
@@ -131,39 +84,94 @@ public class TeamManager : NetworkBehaviour
         }
     }
 
-    // ===== Re-sync puntual de mi vida =====
-    [Command]
-    private void CmdRequestMyLatestHealth(NetworkConnectionToClient sender = null)
+    private void Update()
     {
-        if (healthRecords.TryGetValue(netId, out float savedHealth))
+        if (!isLocalPlayer) return;
+
+        var hc = GetComponent<HealthController>();
+        if (hc == null) return;
+
+        float currentHealth = hc.Health;
+
+        // >>>>> OWNER-AUTHORITATIVE <<<<<
+        // Enviamos al servidor todo cambio significativo (daño o curación)
+        if (Mathf.Abs(currentHealth - lastSentHealth) > HealthDeltaThreshold || Time.time - lastSendTime >= 1f)
         {
-            // Si el servidor tiene guardado <=0, aplicamos mismo patrón de dos fases
-            if (savedHealth <= 0f)
-            {
-                TargetForceHealthSync(sender, netId, DeathEpsilon);
-                TargetConfirmDeath(sender, netId);
-            }
-            else
-            {
-                TargetForceHealthSync(sender, netId, savedHealth);
-            }
+            lastSentHealth = currentHealth;
+            lastSendTime = Time.time;
+            CmdSendMyHealthToServer(currentHealth);
         }
     }
 
-    // ===== Re-sync de todos los jugadores para un cliente concreto =====
+    // ====== Servidor: autoridad, guarda y propaga ======
+    public override void OnStartServer()
+    {
+        base.OnStartServer();
+        Invoke(nameof(AssignTeams), 0.5f);
+    }
+
+    [Command]
+    private void CmdSendMyHealthToServer(float newHealth)
+    {
+        var hc = GetComponent<HealthController>();
+        if (hc == null) return;
+
+        // El servidor es autoridad final
+        float clamped = Mathf.Max(0f, newHealth);
+        hc.Health = clamped;
+        hc.LifeOfBar();
+
+        healthRecords[netId] = clamped;
+
+        if (clamped <= 0f)
+        {
+            // 1) Propaga "casi cero" para que barras no disparen muerte prematura
+            RpcSyncHealth(netId, DeathEpsilon);
+
+            // 2) Confirma 0 definitivo
+            RpcSyncHealth(netId, 0f);
+
+            // 3) Ejecuta muerte en servidor y en todos los clientes
+            //hc.Die();             // servidor también muere (coherencia server-side)
+            //RpcInvokeDeath(netId); // clientes mueren
+        }
+        else
+        {
+            RpcSyncHealth(netId, clamped);
+        }
+    }
+
+    [Command]
+    private void CmdRequestMyLatestHealth(NetworkConnectionToClient sender = null)
+    {
+        float savedHealth;
+        if (!healthRecords.TryGetValue(netId, out savedHealth)) return;
+
+        if (savedHealth <= 0f)
+        {
+            TargetForceHealthSync(sender, netId, DeathEpsilon);
+            TargetForceHealthSync(sender, netId, 0f);
+            TargetInvokeDeath(sender, netId);
+        }
+        else
+        {
+            TargetForceHealthSync(sender, netId, savedHealth);
+        }
+    }
+
     [Command]
     private void CmdRequestAllHealth(NetworkConnectionToClient sender = null)
     {
         foreach (var pair in healthRecords)
         {
             uint kId = pair.Key;
-            float h  = pair.Value;
+            float h = pair.Value;
 
             if (h <= 0f)
             {
                 TargetForceHealthSync(sender, kId, DeathEpsilon);
-                // Confirmación de muerte separada
-                TargetConfirmDeath(sender, kId);
+                TargetForceHealthSync(sender, kId, 0f);
+                TargetInvokeDeath(sender, kId);
             }
             else
             {
@@ -172,32 +180,56 @@ public class TeamManager : NetworkBehaviour
         }
     }
 
-    // ===== Target RPCs para forzar estado en un cliente específico =====
-    [TargetRpc]
-    private void TargetForceHealthSync(NetworkConnection target, uint knightNetId, float health)
+    // ====== RPCs de sincronización ======
+    [ClientRpc]
+    private void RpcSyncHealth(uint knightNetId, float newHealth)
     {
-        if (NetworkClient.spawned.TryGetValue(knightNetId, out NetworkIdentity knightNi))
+        NetworkIdentity knightNi;
+        if (NetworkClient.spawned.TryGetValue(knightNetId, out knightNi))
+        {
+            ApplyHealthAndRefreshUI(knightNi, newHealth);
+        }
+    }
+
+    // Llama a Die() en TODAS las instancias del jugador indicado
+    [ClientRpc]
+    private void RpcInvokeDeath(uint knightNetId)
+    {
+        NetworkIdentity knightNi;
+        if (NetworkClient.spawned.TryGetValue(knightNetId, out knightNi))
+        {
+            var hc = knightNi.GetComponent<HealthController>();
+            if (hc == null) return;
+
+            // Con tu HealthController actual, Die() es internal: llamamos directo
+            hc.Die();
+        }
+    }
+
+    [TargetRpc]
+    private void TargetForceHealthSync(NetworkConnectionToClient target, uint knightNetId, float health)
+    {
+        NetworkIdentity knightNi;
+        if (NetworkClient.spawned.TryGetValue(knightNetId, out knightNi))
         {
             ApplyHealthAndRefreshUI(knightNi, health);
         }
     }
 
     [TargetRpc]
-    private void TargetConfirmDeath(NetworkConnection target, uint knightNetId)
+    private void TargetInvokeDeath(NetworkConnectionToClient target, uint knightNetId)
     {
-        if (NetworkClient.spawned.TryGetValue(knightNetId, out NetworkIdentity knightNi))
+        NetworkIdentity knightNi;
+        if (NetworkClient.spawned.TryGetValue(knightNetId, out knightNi))
         {
-            ApplyHealthAndRefreshUI(knightNi, 0f);
+            var hc = knightNi.GetComponent<HealthController>();
+            if (hc == null) return;
+
+            hc.Die();
         }
     }
 
-    // ===== Asignación de equipos (sin cambios funcionales) =====
-    public override void OnStartServer()
-    {
-        base.OnStartServer();
-        Invoke(nameof(AssignTeams), 0.5f);
-    }
-
+    // ====== Teams (tu lógica original, intacta) ======
     [Server]
     private void AssignTeams()
     {
@@ -207,7 +239,7 @@ public class TeamManager : NetworkBehaviour
 
         for (int i = 0; i < allKnights.Length; i++)
         {
-            List<uint> enemyNetIds = new();
+            List<uint> enemyNetIds = new List<uint>();
 
             for (int j = 0; j < allKnights.Length; j++)
             {
@@ -235,7 +267,8 @@ public class TeamManager : NetworkBehaviour
     [ClientRpc]
     private void RpcUpdateEnemyList(uint knightNetId, List<uint> enemyNetIds)
     {
-        if (NetworkClient.spawned.TryGetValue(knightNetId, out NetworkIdentity knightNi))
+        NetworkIdentity knightNi;
+        if (NetworkClient.spawned.TryGetValue(knightNetId, out knightNi))
         {
             HealthController hc = knightNi.GetComponent<HealthController>();
             if (hc != null)
@@ -243,7 +276,8 @@ public class TeamManager : NetworkBehaviour
                 hc.enemies.Clear();
                 foreach (uint enemyNetId in enemyNetIds)
                 {
-                    if (NetworkClient.spawned.TryGetValue(enemyNetId, out NetworkIdentity enemyNi))
+                    NetworkIdentity enemyNi;
+                    if (NetworkClient.spawned.TryGetValue(enemyNetId, out enemyNi))
                     {
                         hc.enemies.Add(enemyNi.transform);
                     }
@@ -251,35 +285,9 @@ public class TeamManager : NetworkBehaviour
 
                 if (knightNi.isLocalPlayer)
                 {
-                    ColorMyEnemies(hc);
+                    TryColorEnemies(hc);
                 }
             }
         }
-    }
-
-    private void ColorMyEnemies(HealthController hc)
-    {
-        foreach (Transform enemy in hc.enemies)
-        {
-            Image bar = enemy.Find("Canvas/background/LifeBar")?.GetComponent<Image>();
-            if (bar != null)
-                bar.color = Color.red;
-        }
-    }
-
-    public override void OnStartClient()
-    {
-        base.OnStartClient();
-        if (isLocalPlayer)
-        {
-            Invoke(nameof(UpdateLocalEnemyBars), 1f);
-        }
-    }
-
-    private void UpdateLocalEnemyBars()
-    {
-        HealthController hc = GetComponent<HealthController>();
-        if (hc != null)
-            ColorMyEnemies(hc);
     }
 }

@@ -59,28 +59,29 @@ public class HealthController : MonoBehaviour
                 }	    
         }
         //Debug.Log(defeatedEnemies.Count+ "/" + enemies.Count+"/"+health);
-        if ((defeatedEnemies.Count == enemies.Count))
+        if (defeatedEnemies.Count == enemies.Count)
         {
             animator.SetBool("WIN", true);
-            // desactivar barra de vida
-            lifeOfBar.transform.parent.GetComponent<CanvasGroup>().alpha = 0f;
+            lifeOfBar.transform.parent.transform.gameObject.SetActive(false);
         }
         else
         {
             animator.SetBool("WIN", false);
-            lifeOfBar.transform.parent.GetComponent<CanvasGroup>().alpha = 1f;
+            if (live) lifeOfBar.transform.parent.gameObject.SetActive(true);
         }
 
-	if(health<0 && iddle)
-	{
-	    animator.SetTrigger("death");
-	}
+        if(health<0 && iddle)
+        {
+            animator.SetTrigger("death");
+        }
 
-	iddle=false;
+        iddle=false;
 
-        // Intento de resucitar si la vida volvió a ser mayor que 0
-        Resucitate();
-
+        if (health > 0 && !live)
+        {
+            // Intento de resucitar si la vida volvió a ser mayor que 0
+            Resucitate();
+        }
     }
 
     // Función que recibe un string con los valores de ataque
@@ -157,9 +158,9 @@ public class HealthController : MonoBehaviour
 
     public void HealthUpdate(float damage, Transform enemy)
     {
-	UpdatePositionRelativeToEnemy(enemy);
-	bool isFacingEnemy = IsFacingEnemy(enemy,30);
-	
+        UpdatePositionRelativeToEnemy(enemy);
+        bool isFacingEnemy = IsFacingEnemy(enemy,30);
+        
         // Comprobar si el objeto tiene un escudo activo
         bool hasShield = GetComponent<KnightController>()?.HasShield(isFacingEnemy) ?? false;
 
@@ -168,8 +169,8 @@ public class HealthController : MonoBehaviour
         {
 	    Debug.Log(this.gameObject.name + " tiene escudo activo. No se aplicará daño. Vida: " + health);
 	
-	animator.SetTrigger("shieldReaction");
-	sounds.ShieldSound();
+        animator.SetTrigger("shieldReaction");
+        sounds.ShieldSound();
 	
             return;
         }
@@ -179,19 +180,19 @@ public class HealthController : MonoBehaviour
         animator.SetFloat("health", health);
         Debug.Log(this.gameObject.name + ": Vida actual: " + health);
 
-	LifeOfBar(); //Actualizar Barra de vida
-	sounds.HurtSound();
+        LifeOfBar(); //Actualizar Barra de vida
+        sounds.HurtSound();
         if (health <= 0)
         {
             Die();
 	    return;
         }
 
-	animator.SetTrigger("coupReaction");
+	    animator.SetTrigger("coupReaction");
     }
 
 
-    private void Die()
+    internal void Die()
     {
         Debug.Log(this.gameObject.name + " ha muerto.");
         animator.ResetTrigger("win");
@@ -234,13 +235,17 @@ public class HealthController : MonoBehaviour
 
             // Desactivar NetworkTransformHybrid para evitar problemas de sincronización
             GetComponent<NetworkTransformHybrid>().enabled = false;
+            animator.ResetTrigger("resucitate");
         }
     }
 
     private void finish()
     {
-	animator.enabled = false;
-	animator.SetTrigger("death");
+        var netIdentity = GetComponent<NetworkIdentity>();
+        if (netIdentity != null && netIdentity.isClient && netIdentity.isClientOnly && netIdentity.isLocalPlayer == false && netIdentity.isServer == false)
+            return; // Si no es el jugador local, no ejecutar la animación de muerte
+        animator.enabled = false;
+        animator.SetTrigger("death");
     }
 
 
@@ -289,49 +294,57 @@ public class HealthController : MonoBehaviour
     // Resucitar si la vida es mayor que 0 y actualmente está marcado como muerto (live == false)
     public void Resucitate()
     {
-        if (health > 0 && !live)
+        //imprime la vida actual y el estado de live para depuración
+        Debug.Log("Resucitate Check - Vida: " + health + ", live: " + live);
+        //lanza un bool para resucitar animacion
+        
+        animator.ResetTrigger("death");
+        animator.SetTrigger("resucitate");
+        // Reactivar NetworkTransformHybrid para la sincronización
+        GetComponent<NetworkTransformHybrid>().enabled = true;
+
+        live = true;
+        // Reactivar animator
+        if (animator != null)
         {
-            // Reactivar NetworkTransformHybrid para la sincronización
-            GetComponent<NetworkTransformHybrid>().enabled = true;
-
-            live = true;
-            // Reactivar animator
-            if (animator != null)
-            {
-                animator.enabled = true;
-                animator.ResetTrigger("death");
-            }
-
-            // Reactivar barra de vida (Canvas/background)
-            if (lifeOfBar != null && lifeOfBar.transform.parent != null)
-            {
-                lifeOfBar.transform.parent.gameObject.SetActive(true);
-            }
-
-            // Reactivar collider
-            Collider col = GetComponent<Collider>();
-            if (col != null)
-            {
-                col.enabled = true;
-            }
-
-            // Reactivar rigidbody
-            Rigidbody rb = GetComponent<Rigidbody>();
-            if (rb != null)
-            {
-                rb.isKinematic = false;
-            }
-
-            // Reset flags
-            live = true;
-
-            // Actualizar UI y animator con la nueva vida
-            LifeOfBar();
-            if (animator != null)
-            {
-                animator.SetFloat("health", health);
-            }
+            animator.enabled = true;
+            animator.ResetTrigger("death");
         }
+
+        // Reactivar barra de vida (Canvas/background)
+        if (lifeOfBar != null && lifeOfBar.transform.parent != null)
+        {
+            lifeOfBar.transform.parent.gameObject.SetActive(true);
+        }
+
+        // Reactivar collider
+        Collider col = GetComponent<Collider>();
+        if (col != null)
+        {
+            col.enabled = true;
+        }
+
+        // Reactivar rigidbody
+        Rigidbody rb = GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.isKinematic = false;
+        }
+
+        // Reset flags
+        live = true;
+        iddle = false;
+
+        // Actualizar UI y animator con la nueva vida
+        LifeOfBar();
+        if (animator != null)
+        {
+            animator.SetFloat("health", health);
+        }
+
+        //Reactivar network transform
+        GetComponent<NetworkTransformHybrid>().enabled = true;
+
     }
 
 

@@ -64,21 +64,21 @@ ModelImporter:
         messageOptions: 0
       - time: 0.22807372
         functionName: ApplyAttack
-        data: 180/0.3/10
+        data: 180/0.3/15
         objectReferenceParameter: {instanceID: 0}
         floatParameter: 0
         intParameter: 0
         messageOptions: 0
       - time: 0.39285716
         functionName: ApplyAttack
-        data: 180/0.3/10
+        data: 180/0.3/15
         objectReferenceParameter: {instanceID: 0}
         floatParameter: 0
         intParameter: 0
         messageOptions: 0
       - time: 0.71381503
         functionName: ApplyAttack
-        data: 180/0.003/15
+        data: 180/0.003/20
         objectReferenceParameter: {instanceID: 0}
         floatParameter: 0
         intParameter: 0
