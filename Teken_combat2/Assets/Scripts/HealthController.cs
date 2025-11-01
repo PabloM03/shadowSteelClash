@@ -58,11 +58,11 @@ public class HealthController : MonoBehaviour
                     defeatedEnemies.Add(enemy); // Marca el enemigo como derrotado
                 }	    
         }
-        /*Debug.Log(defeatedEnemies.Count+ "/" + enemies.Count+"/"+health);
+        Debug.Log(defeatedEnemies.Count+ "/" + enemies.Count+"/"+health);
 
-        enemies.RemoveAll(e => e == null);
+        //enemies.RemoveAll(e => e == null);
 
-        defeatedEnemies.RemoveWhere(e => e == null || !enemies.Contains(e));
+        //defeatedEnemies.RemoveWhere(e => e == null || !enemies.Contains(e));
 
         if (defeatedEnemies.Count == enemies.Count)
         {
@@ -73,7 +73,7 @@ public class HealthController : MonoBehaviour
         {
             animator.SetBool("WIN", false);
             if (live) lifeOfBar.transform.parent.gameObject.SetActive(true);
-        }*/
+        }
 
         if(health<0 && iddle)
         {
@@ -311,7 +311,6 @@ public class HealthController : MonoBehaviour
         // Reactivar NetworkTransformHybrid para la sincronización
         GetComponent<NetworkTransformHybrid>().enabled = true;
 
-        live = true;
         // Reactivar animator
         if (animator != null)
         {
