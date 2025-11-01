@@ -48,7 +48,7 @@ public class TeamManager : NetworkBehaviour
         }
 
         // Reintento de sincronización individual (por si hay drift)
-        InvokeRepeating(nameof(RequestServerResync), 2f, 5f);
+        //InvokeRepeating(nameof(RequestServerResync), 2f, 5f);
 
         // Solicitar sincronización completa del estado a la entrada
         Invoke(nameof(RequestAllPlayersHealth), 1f);
@@ -129,7 +129,7 @@ public class TeamManager : NetworkBehaviour
             RpcSyncHealth(netId, DeathEpsilon);
 
             // 2) Confirma 0 definitivo
-            RpcSyncHealth(netId, 0f);
+            //RpcSyncHealth(netId, 0f);
 
             // 3) Ejecuta muerte en servidor y en todos los clientes
             //hc.Die();             // servidor también muere (coherencia server-side)

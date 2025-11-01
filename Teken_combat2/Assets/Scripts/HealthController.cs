@@ -58,7 +58,12 @@ public class HealthController : MonoBehaviour
                     defeatedEnemies.Add(enemy); // Marca el enemigo como derrotado
                 }	    
         }
-        //Debug.Log(defeatedEnemies.Count+ "/" + enemies.Count+"/"+health);
+        /*Debug.Log(defeatedEnemies.Count+ "/" + enemies.Count+"/"+health);
+
+        enemies.RemoveAll(e => e == null);
+
+        defeatedEnemies.RemoveWhere(e => e == null || !enemies.Contains(e));
+
         if (defeatedEnemies.Count == enemies.Count)
         {
             animator.SetBool("WIN", true);
@@ -68,7 +73,7 @@ public class HealthController : MonoBehaviour
         {
             animator.SetBool("WIN", false);
             if (live) lifeOfBar.transform.parent.gameObject.SetActive(true);
-        }
+        }*/
 
         if(health<0 && iddle)
         {
@@ -82,6 +87,9 @@ public class HealthController : MonoBehaviour
             // Intento de resucitar si la vida volvió a ser mayor que 0
             Resucitate();
         }
+
+        if((health<=0 || !live) && animator.enabled == false) Die();
+        
     }
 
     // Función que recibe un string con los valores de ataque
@@ -182,7 +190,7 @@ public class HealthController : MonoBehaviour
 
         LifeOfBar(); //Actualizar Barra de vida
         sounds.HurtSound();
-        if (health <= 0)
+        if (health <= 0 || !live)
         {
             Die();
 	    return;
@@ -197,7 +205,7 @@ public class HealthController : MonoBehaviour
         Debug.Log(this.gameObject.name + " ha muerto.");
         animator.ResetTrigger("win");
         animator.SetTrigger("death");
-        live=false;
+        live = false;
         y = 0;
         
         lifeOfBar.transform.parent.gameObject.SetActive(false);
