@@ -7,7 +7,7 @@ using Mirror;
 public class TeamManager : NetworkBehaviour
 {
     // --- Ajuste para evitar jitter de 0 exacto en barras antes de confirmar muerte ---
-    private const float DeathEpsilon = 0.0001f;
+    private const float DeathEpsilon = 0.000f;
     private const float HealthDeltaThreshold = 0.01f; // todo cambio real de vida (daño o curación)
 
     private float lastSendTime = 0f;
