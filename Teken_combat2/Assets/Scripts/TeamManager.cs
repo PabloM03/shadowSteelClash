@@ -149,7 +149,7 @@ public class TeamManager : NetworkBehaviour
 
         if (savedHealth <= 0f)
         {
-            TargetForceHealthSync(sender, netId, DeathEpsilon);
+            //TargetForceHealthSync(sender, netId, DeathEpsilon);
             TargetForceHealthSync(sender, netId, 0f);
             TargetInvokeDeath(sender, netId);
         }
@@ -169,7 +169,7 @@ public class TeamManager : NetworkBehaviour
 
             if (h <= 0f)
             {
-                TargetForceHealthSync(sender, kId, DeathEpsilon);
+                //TargetForceHealthSync(sender, kId, DeathEpsilon);
                 TargetForceHealthSync(sender, kId, 0f);
                 TargetInvokeDeath(sender, kId);
             }
