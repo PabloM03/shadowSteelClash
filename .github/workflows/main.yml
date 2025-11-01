@@ -29,6 +29,10 @@ jobs:
           source: "${{ env.BUILD_DIR }}/**"
           target: "${{ env.SERVICE_PATH }}"
           strip_components: 1
+          exclude: |
+            ${{ env.BUILD_DIR }}/builds/**
+            ${{ env.BUILD_DIR }}/**/*.log
+            ${{ env.BUILD_DIR }}/**/*.pdb
 
       # Dar permisos y reiniciar el servicio
       - name: Restart Unity service
@@ -40,6 +44,14 @@ jobs:
           script: |
             ls -l ${{ env.SERVICE_PATH }}
             sudo chmod +x ${{ env.SERVICE_PATH }}/${{ env.EXECUTABLE }}
+
+            # Vaciar log
+            LOG_FILE="/home/${{ secrets.SERVER_USER }}/tekencombat/server.log"
+            sudo mkdir -p "$(dirname "$LOG_FILE")"
+            sudo touch "$LOG_FILE"
+            sudo truncate -s 0 "$LOG_FILE"
+            echo "Log vaciado: $LOG_FILE"
+
             sudo systemctl daemon-reload
             sudo systemctl restart tekencombat.service
             sudo systemctl status --no-pager tekencombat.service
