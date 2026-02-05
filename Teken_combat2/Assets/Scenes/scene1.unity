@@ -7106,6 +7106,11 @@ PrefabInstance:
       propertyPath: 'enemies.Array.data[0]'
       value: 
       objectReference: {fileID: 285559986}
+    - target: {fileID: 1187875982916570849, guid: cdc22f90c4b492f4882292766a5dc546,
+        type: 3}
+      propertyPath: sceneId
+      value: 4059510102
+      objectReference: {fileID: 0}
     - target: {fileID: 3924155236714337900, guid: cdc22f90c4b492f4882292766a5dc546,
         type: 3}
       propertyPath: m_ApplyRootMotion
@@ -7227,6 +7232,9 @@ PrefabInstance:
     - {fileID: 291798295306167544, guid: cdc22f90c4b492f4882292766a5dc546, type: 3}
     - {fileID: -2306577010665344862, guid: cdc22f90c4b492f4882292766a5dc546, type: 3}
     - {fileID: 35049652217434899, guid: cdc22f90c4b492f4882292766a5dc546, type: 3}
+    - {fileID: 1187875982916570849, guid: cdc22f90c4b492f4882292766a5dc546, type: 3}
+    - {fileID: 8445029675521826934, guid: cdc22f90c4b492f4882292766a5dc546, type: 3}
+    - {fileID: 5469555068179525961, guid: cdc22f90c4b492f4882292766a5dc546, type: 3}
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
     m_AddedComponents: []

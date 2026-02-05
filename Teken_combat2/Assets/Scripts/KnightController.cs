@@ -72,6 +72,16 @@ public class KnightController : NetworkBehaviour
     [SerializeField] private float deadZone = 0.25f; // valor mínimo antes de empezar a moverse
     [SerializeField] private float sensitivity = 0.6f; // reduce la sensibilidad general del movimiento
 
+    private bool lanchWarrok = false;
+    private bool warrokLaunched = false;
+
+    public Transform warrok;
+
+    private HealthController healthController;
+    private HealthController warrokHealthController;
+    private WarrokController warrokController;
+    private int NumEnemeies = 0;
+
     // --------- Estructura de entradas unificadas ----------
     private struct InputState
     {
@@ -132,22 +142,39 @@ public class KnightController : NetworkBehaviour
         // Suscribir triggers de click (no-hold)
         if (attack1Button) attack1Button.onClick.AddListener(() => { TriggerBool("AttackBool"); anyButton = true; });
         if (attack2Button) attack2Button.onClick.AddListener(() => { TriggerBool("Attack2Bool"); anyButton = true; });
-        if (jumpButton)    jumpButton.onClick.AddListener(() => { TriggerBool("JumpBool");   anyButton = true; });
-        if (dodgeButton)   dodgeButton.onClick.AddListener(() => { TriggerBool("dodgeBool"); anyButton = true; });
-        if (dodgeButton2)  dodgeButton2.onClick.AddListener(() => { TriggerBool("dodge2Bool"); anyButton = true; });
-        if (kickButton)    kickButton.onClick.AddListener(() => { TriggerBool("kickBool");   anyButton = true; });
-        if (lanchWarrokButton) lanchWarrokButton.onClick.AddListener(() => { anyButton = true; /* placeholder */ });
+        if (jumpButton) jumpButton.onClick.AddListener(() => { TriggerBool("JumpBool"); anyButton = true; });
+        if (dodgeButton) dodgeButton.onClick.AddListener(() => { TriggerBool("dodgeBool"); anyButton = true; });
+        if (dodgeButton2) dodgeButton2.onClick.AddListener(() => { TriggerBool("dodge2Bool"); anyButton = true; });
+        if (kickButton) kickButton.onClick.AddListener(() => { TriggerBool("kickBool"); anyButton = true; });
+        if (lanchWarrokButton) lanchWarrokButton.onClick.AddListener(() => { lanchWarrok = true; anyButton = true; });
 
         // Capturar holds (si existen)
-        crouchHold    = crouchButton    ? crouchButton.GetComponent<UIButtonHold>()    : null;
+        crouchHold = crouchButton ? crouchButton.GetComponent<UIButtonHold>() : null;
         turnRightHold = turnRightButton ? turnRightButton.GetComponent<UIButtonHold>() : null;
-        turnLeftHold  = turnLeftButton  ? turnLeftButton.GetComponent<UIButtonHold>()  : null;
-        shieldHold    = shieldButton    ? shieldButton.GetComponent<UIButtonHold>()    : null;
-        if (crouchButton && !crouchHold)       Debug.LogWarning("crouchButton requiere UIButtonHold para funcionar como hold.");
+        turnLeftHold = turnLeftButton ? turnLeftButton.GetComponent<UIButtonHold>() : null;
+        shieldHold = shieldButton ? shieldButton.GetComponent<UIButtonHold>() : null;
+        if (crouchButton && !crouchHold) Debug.LogWarning("crouchButton requiere UIButtonHold para funcionar como hold.");
         if (turnRightButton && !turnRightHold) Debug.LogWarning("turnRightButton requiere UIButtonHold para funcionar como hold.");
-        if (turnLeftButton && !turnLeftHold)   Debug.LogWarning("turnLeftButton requiere UIButtonHold para funcionar como hold.");
+        if (turnLeftButton && !turnLeftHold) Debug.LogWarning("turnLeftButton requiere UIButtonHold para funcionar como hold.");
         if (shieldButton && !shieldHold) Debug.LogWarning("shieldButton requiere UIButtonHold para funcionar como hold.");
+
+        healthController = GetComponent<HealthController>();
+        CreateWarrok();        
+    }
     
+
+    private void CreateWarrok()
+    {
+        // Placeholder para crear Warrok
+        Debug.Log("Creando Warrok");
+        warrok = transform.Find("Warrok");
+        // Separar Warrok del caballero en la jerarquía (ahora es root en la escena)
+        warrok.SetParent(null, true);
+        warrok.Find("Canvas/background/LifeBar").GetComponentInChildren<Image>().color = Color.green;
+        warrokController = warrok.GetComponent<WarrokController>();
+        warrokHealthController = warrok.GetComponent<HealthController>();
+        warrok.gameObject.SetActive(false);
+        
     }
 
     private void Update()
@@ -182,8 +209,43 @@ public class KnightController : NetworkBehaviour
         // 6) AnyButton
         animator.SetBool("AnyButton", anyButton);
 
-        if (showButtons && (input.attack1 || input.attack2))
-            Debug.Log("Botón de ataque activado");
+        // 7) Lanzar Warrok
+        if (lanchWarrok && !warrokLaunched)
+        {
+            // Placeholder para lanzar Warrok
+            Debug.Log("Lanzando Warrok");
+            warrokLaunched = true;
+            warrok.gameObject.SetActive(true);
+        }
+
+        // 8) Asignar enemigos Warrok
+        if (warrokLaunched)
+        {
+            //Debug.Log("Asignandio enemigos Warrok");
+            if (NumEnemeies != warrokHealthController.enemies.Count)
+            {
+                NumEnemeies = healthController.enemies.Count;
+                foreach (var enemyEntry in healthController.enemies)
+                {
+                    Debug.Log("Enemigo asignado al Warrok: " + enemyEntry.name);
+                    if (!enemyEntry.GetComponent<HealthController>().enemies.Contains(warrok))
+                    {
+                        enemyEntry.GetComponent<HealthController>().enemies.Add(warrok);
+
+                        var wc = enemyEntry.GetComponent<WarrokController>();
+                        if (wc != null)
+                        {
+                            wc.knights.Add(warrok);
+                        }
+                    }
+                }
+
+                warrokHealthController.enemies = healthController.enemies;
+                warrokController.knights = healthController.enemies;
+            }
+            
+            NumEnemeies = healthController.enemies.Count;
+        }
     }
 
     // --------- Helpers principales ----------

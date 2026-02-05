@@ -47,54 +47,59 @@ public class WarrokController : MonoBehaviour
 
     void Update()
     {
-	knight = GetClosestKnight();
-	if(knight != null && knight.gameObject.activeInHierarchy)
-	{
-	    if(!animator.enabled)return;
-
-            // Calcula la distancia entre el enemigo y el caballero
-            float distanceToKnight = Vector3.Distance(transform.position, knight.position);
-            //animator.SetBool("turnLeft", false);
-            //animator.SetBool("turnRight", false);
-            animator.SetInteger("attackType", 0); // Restablece el trigger específico del ataque
-	    animator.SetFloat("distance", distanceToKnight);
-
-            // Si la distancia está entre minDistance y maxDistance, activar el modo "run"
-            if ((distanceToKnight < maxDistance) && (distanceToKnight > minDistance))
+        if (knights.Count > 0)
+        {
+            knight = GetClosestKnight();
+            if (knight != null && knight.gameObject.activeInHierarchy)
             {
-                // Activa el bool "run" en el Animator
-                animator.SetBool("run", true);
+                if (!animator.enabled) return;
+
+                // Calcula la distancia entre el enemigo y el caballero
+                float distanceToKnight = Vector3.Distance(transform.position, knight.position);
+                //animator.SetBool("turnLeft", false);
+                //animator.SetBool("turnRight", false);
+                animator.SetInteger("attackType", 0); // Restablece el trigger específico del ataque
+                animator.SetFloat("distance", distanceToKnight);
+
+                // Si la distancia está entre minDistance y maxDistance, activar el modo "run"
+                if ((distanceToKnight < maxDistance) && (distanceToKnight > minDistance))
+                {
+                    // Activa el bool "run" en el Animator
+                    animator.SetBool("run", true);
+                }
+                else
+                {
+                    // Desactiva el bool "run" en el Animator
+                    animator.SetBool("run", false);
+
+                    if (distanceToKnight < minDistance)
+                    {
+                        // Asigna un número aleatorio entre 1 y 5 a attackType al inicio de cada Update
+                        attackType = Random.Range(1, 7);
+                        animator.SetInteger("attackType", attackType); // Activa el trigger específico del ataque
+                    }
+                }
+
+                // Calcula la dirección hacia el caballero
+                Vector3 directionToKnight = (knight.position - transform.position).normalized;
+
+                // Calcula la rotación hacia el caballero
+                Quaternion lookRotation = Quaternion.LookRotation(directionToKnight);
+
+                // Suaviza la rotación hacia el caballero
+                transform.rotation = Quaternion.Slerp(transform.rotation, lookRotation, Time.deltaTime * rotationSpeed);
             }
             else
             {
-                // Desactiva el bool "run" en el Animator
                 animator.SetBool("run", false);
-
-                if (distanceToKnight < minDistance)
-                {
-	            // Asigna un número aleatorio entre 1 y 5 a attackType al inicio de cada Update
-                    attackType = Random.Range(1, 7);
-                    animator.SetInteger("attackType", attackType); // Activa el trigger específico del ataque
-                }
             }
-
-            // Calcula la dirección hacia el caballero
-            Vector3 directionToKnight = (knight.position - transform.position).normalized;
-
-            // Calcula la rotación hacia el caballero
-            Quaternion lookRotation = Quaternion.LookRotation(directionToKnight);
-
-            // Suaviza la rotación hacia el caballero
-            transform.rotation = Quaternion.Slerp(transform.rotation, lookRotation, Time.deltaTime * rotationSpeed);
-    	}
-	else
-	{
-	    animator.SetBool("run", false);
-	}
+        }
     }
 
     private Transform GetClosestKnight()
     {
+        if (knights.Count == 0 || knights.All(knight => knight == null))
+            return null;
         // Filtra los caballeros con Health > 0 y luego encuentra el más cercano usando LINQ
         return knights
             .Where(knight => knight.GetComponent<HealthController>().Health > 0) // Filtra caballeros con Health > 0

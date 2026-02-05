@@ -47,32 +47,43 @@ public class HealthController : MonoBehaviour
 
     void Update()
     {
-        foreach (Transform enemy in enemies)
+        int enemiesCount = (enemies != null) ? enemies.Count : 0;
+
+        if (enemies != null && enemies.Count > 0)
         {
+            foreach (Transform enemy in enemies)
+            {
+                if (enemy == null) continue; // Saltar si el enemigo es nulo
+
                 enemyHealth = enemy.GetComponent<HealthController>();
+                if (enemyHealth == null) continue;
 
                 // Verifica si el enemigo está derrotado y si aún no se ha activado "win" para él
                 if (enemyHealth.Health <= 0 && health > 0 && live && !defeatedEnemies.Contains(enemy))
-                {  
+                {
                     animator.SetTrigger("win");
                     defeatedEnemies.Add(enemy); // Marca el enemigo como derrotado
-                }	    
+                }
+            }
         }
-        Debug.Log(defeatedEnemies.Count+ "/" + enemies.Count+"/"+health);
+
+        //Debug.Log(defeatedEnemies.Count + "/" + enemiesCount + "/" + health);
 
         //enemies.RemoveAll(e => e == null);
 
         //defeatedEnemies.RemoveWhere(e => e == null || !enemies.Contains(e));
 
-        if (defeatedEnemies.Count == enemies.Count)
+        if (defeatedEnemies.Count == enemiesCount)
         {
             animator.SetBool("WIN", true);
-            lifeOfBar.transform.parent.transform.gameObject.SetActive(false);
+            if (lifeOfBar != null && lifeOfBar.transform != null && lifeOfBar.transform.parent != null)
+                lifeOfBar.transform.parent.transform.gameObject.SetActive(false);
         }
         else
         {
             animator.SetBool("WIN", false);
-            if (live) lifeOfBar.transform.parent.gameObject.SetActive(true);
+            if (live && lifeOfBar != null && lifeOfBar.transform != null && lifeOfBar.transform.parent != null)
+                lifeOfBar.transform.parent.gameObject.SetActive(true);
         }
 
         if(health<0 && iddle)
@@ -124,17 +135,23 @@ public class HealthController : MonoBehaviour
     private List<Transform> IsTargetInRange(float angleRange, float maxDistance)
     {
         List<Transform> dangersEnemies = new List<Transform>();
-	float distancePlus=0;
+        float distancePlus = 0;
+
+        if (enemies == null || enemies.Count == 0)
+            return dangersEnemies;
 
         foreach (Transform enemy in enemies)
         {
+            if (enemy == null) continue;
+
             // Verifica si el enemigo está dentro del ángulo especificado
             if (IsFacingEnemy(enemy, angleRange))
             {
                 // Calcula la distancia al enemigo
-		float enemyPower=enemy.GetComponent<HealthController>().power;
-		if(enemyPower>power) distancePlus=(enemyPower-power);
-                float distance = Vector3.Distance(transform.position, enemy.position)- distancePlus;
+                var enemyHc = enemy.GetComponent<HealthController>();
+                float enemyPower = (enemyHc != null) ? enemyHc.power : 0f;
+                if (enemyPower > power) distancePlus = (enemyPower - power);
+                float distance = Vector3.Distance(transform.position, enemy.position) - distancePlus;
 
                 // Verifica si el enemigo está dentro del rango de distancia y ángulo
                 if (distance <= maxDistance)
@@ -142,7 +159,7 @@ public class HealthController : MonoBehaviour
                     dangersEnemies.Add(enemy);
                 }
             }
-	    distancePlus=0;
+            distancePlus = 0;
         }
 
         return dangersEnemies;
@@ -150,6 +167,8 @@ public class HealthController : MonoBehaviour
 
     private bool IsFacingEnemy(Transform enemy, float angleRange)
     {
+        if (enemy == null) return false;
+
         // Dirección hacia el enemigo
         Vector3 directionToEnemy = (enemy.position - transform.position).normalized;
 
@@ -202,7 +221,7 @@ public class HealthController : MonoBehaviour
 
     internal void Die()
     {
-        Debug.Log(this.gameObject.name + " ha muerto.");
+        if (live) Debug.Log(this.gameObject.name + " ha muerto.");
         animator.ResetTrigger("win");
         animator.SetTrigger("death");
         live = false;
@@ -242,6 +261,7 @@ public class HealthController : MonoBehaviour
             lifeOfBar.transform.parent.gameObject.SetActive(false);
 
             // Desactivar NetworkTransformHybrid para evitar problemas de sincronización
+            if (GetComponent<NetworkTransformHybrid>() != null)
             GetComponent<NetworkTransformHybrid>().enabled = false;
             animator.ResetTrigger("resucitate");
         }
@@ -309,6 +329,7 @@ public class HealthController : MonoBehaviour
         animator.ResetTrigger("death");
         animator.SetTrigger("resucitate");
         // Reactivar NetworkTransformHybrid para la sincronización
+        if (GetComponent<NetworkTransformHybrid>() != null)
         GetComponent<NetworkTransformHybrid>().enabled = true;
 
         // Reactivar animator
@@ -350,6 +371,7 @@ public class HealthController : MonoBehaviour
         }
 
         //Reactivar network transform
+        if (GetComponent<NetworkTransformHybrid>() != null)
         GetComponent<NetworkTransformHybrid>().enabled = true;
 
     }

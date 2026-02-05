@@ -656,6 +656,10 @@ PrefabInstance:
         type: 3}
       insertIndex: -1
       addedObject: {fileID: 1375537551}
+    - targetCorrespondingSourceObject: {fileID: -8679921383154817045, guid: 5e5c29fe27f484f93a2b30e0d80049b8,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 285559986}
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 5e5c29fe27f484f93a2b30e0d80049b8,
         type: 3}
@@ -17391,7 +17395,7 @@ PrefabInstance:
   serializedVersion: 2
   m_Modification:
     serializedVersion: 3
-    m_TransformParent: {fileID: 0}
+    m_TransformParent: {fileID: 1122759217}
     m_Modifications:
     - target: {fileID: -8679921383154817045, guid: f4e93b5ab602c4e90ab31658290d5cf6,
         type: 3}
@@ -17421,7 +17425,7 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: f4e93b5ab602c4e90ab31658290d5cf6,
         type: 3}
       propertyPath: m_LocalPosition.z
-      value: 1.4
+      value: 6.4
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: f4e93b5ab602c4e90ab31658290d5cf6,
         type: 3}
@@ -17431,7 +17435,7 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: f4e93b5ab602c4e90ab31658290d5cf6,
         type: 3}
       propertyPath: m_LocalRotation.x
-      value: 0
+      value: -0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: f4e93b5ab602c4e90ab31658290d5cf6,
         type: 3}
@@ -17441,7 +17445,7 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: f4e93b5ab602c4e90ab31658290d5cf6,
         type: 3}
       propertyPath: m_LocalRotation.z
-      value: 0
+      value: -0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: f4e93b5ab602c4e90ab31658290d5cf6,
         type: 3}
@@ -17960,6 +17964,7 @@ MonoBehaviour:
   showButtons: 0
   deadZone: 0.25
   sensitivity: 0.6
+  warrok: {fileID: 285559986}
 --- !u!1 &1155887064
 GameObject:
   m_ObjectHideFlags: 0
@@ -24981,7 +24986,6 @@ SceneRoots:
   - {fileID: 350334632}
   - {fileID: 462056367}
   - {fileID: 195913241}
-  - {fileID: 1023743039}
   - {fileID: 679462369}
   - {fileID: 1436360435}
   - {fileID: 125732467}
