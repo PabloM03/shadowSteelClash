@@ -283,7 +283,6 @@ public class KnightController : NetworkBehaviour
 
     private IEnumerator ResolveWarrok(uint netId)
     {
-        // Esperar a que Mirror registre el spawn en este cliente
         while (!NetworkClient.spawned.ContainsKey(netId))
             yield return null;
 
@@ -292,7 +291,16 @@ public class KnightController : NetworkBehaviour
         warrokInstance = ni.transform;
         warrokController = warrokInstance.GetComponent<WarrokController>();
         warrokHealthController = warrokInstance.GetComponent<HealthController>();
+
+        // ✅ Pintar barra verde (local en cada cliente)
+        Transform lifeBarT = warrokInstance.Find("Canvas/background/LifeBar");
+        if (lifeBarT != null)
+        {
+            var img = lifeBarT.GetComponentInChildren<Image>(true);
+            if (img != null) img.color = Color.green;
+        }
     }
+
 
     // --------- Helpers principales ----------
     private bool IsControllable()
