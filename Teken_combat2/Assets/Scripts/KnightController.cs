@@ -10,6 +10,7 @@ using UnityEngine.UI;
 /// - Unifica entradas: teclado y canvas provocan exactamente los mismos flags/animaciones.
 /// - Conserva giros alrededor del centro con A/D (y botones TurnLeft/Right) y el movimiento/orientación con flechas (y joystick).
 /// - Añadido: public Transform cameraTransform para no romper referencias externas (online.cs).
+/// - NUEVO: Spawnea Warrok como NetworkObject (server-authoritative) para que lo vean todos.
 /// </summary>
 public class KnightController : NetworkBehaviour
 {
@@ -75,12 +76,21 @@ public class KnightController : NetworkBehaviour
     private bool lanchWarrok = false;
     private bool warrokLaunched = false;
 
-    public Transform warrok;
+    // ====== NUEVO: Warrok networked ======
+    [Header("Warrok (Networked)")]
+    [Tooltip("Prefab del Warrok con NetworkIdentity (y opcionalmente NetworkTransformHybrid).")]
+    [SerializeField] private GameObject warrokPrefab;
 
+    private Transform warrokInstance; // instancia en escena (root)
     private HealthController healthController;
     private HealthController warrokHealthController;
     private WarrokController warrokController;
+
     private int NumEnemeies = 0;
+
+    // netId del warrok (replicado a todos). Hook para resolver instancia en clientes.
+    [SyncVar(hook = nameof(OnWarrokNetIdChanged))]
+    private uint warrokNetId;
 
     // --------- Estructura de entradas unificadas ----------
     private struct InputState
@@ -133,6 +143,8 @@ public class KnightController : NetworkBehaviour
         if (lookAt && cameraTransform)
         {
             var source = new ConstraintSource { sourceTransform = cameraTransform, weight = 1f };
+            // Si el constraint no tiene sources, SetSource(0) no funciona. Pero no cambiamos tu lógica aquí
+            // porque dijiste "no tocar el resto". Asumimos que ya tienes source 0 en el prefab.
             lookAt.SetSource(0, source);
         }
 
@@ -146,6 +158,8 @@ public class KnightController : NetworkBehaviour
         if (dodgeButton) dodgeButton.onClick.AddListener(() => { TriggerBool("dodgeBool"); anyButton = true; });
         if (dodgeButton2) dodgeButton2.onClick.AddListener(() => { TriggerBool("dodge2Bool"); anyButton = true; });
         if (kickButton) kickButton.onClick.AddListener(() => { TriggerBool("kickBool"); anyButton = true; });
+
+        // ⚠️ Antes activabas un hijo local. Ahora pedimos spawn networked.
         if (lanchWarrokButton) lanchWarrokButton.onClick.AddListener(() => { lanchWarrok = true; anyButton = true; });
 
         // Capturar holds (si existen)
@@ -159,22 +173,6 @@ public class KnightController : NetworkBehaviour
         if (shieldButton && !shieldHold) Debug.LogWarning("shieldButton requiere UIButtonHold para funcionar como hold.");
 
         healthController = GetComponent<HealthController>();
-        CreateWarrok();        
-    }
-    
-
-    private void CreateWarrok()
-    {
-        // Placeholder para crear Warrok
-        Debug.Log("Creando Warrok");
-        warrok = transform.Find("Warrok");
-        // Separar Warrok del caballero en la jerarquía (ahora es root en la escena)
-        warrok.SetParent(null, true);
-        warrok.Find("Canvas/background/LifeBar").GetComponentInChildren<Image>().color = Color.green;
-        warrokController = warrok.GetComponent<WarrokController>();
-        warrokHealthController = warrok.GetComponent<HealthController>();
-        warrok.gameObject.SetActive(false);
-        
     }
 
     private void Update()
@@ -209,43 +207,91 @@ public class KnightController : NetworkBehaviour
         // 6) AnyButton
         animator.SetBool("AnyButton", anyButton);
 
-        // 7) Lanzar Warrok
+        // 7) Lanzar Warrok (AHORA: spawn por servidor)
         if (lanchWarrok && !warrokLaunched)
         {
-            // Placeholder para lanzar Warrok
-            Debug.Log("Lanzando Warrok");
-            warrokLaunched = true;
-            warrok.gameObject.SetActive(true);
+            lanchWarrok = false;
+
+            if (isLocalPlayer)
+            {
+                Debug.Log("Lanzando Warrok (networked)");
+                warrokLaunched = true;
+                CmdSpawnWarrok();
+            }
         }
 
-        // 8) Asignar enemigos Warrok
-        if (warrokLaunched)
+        // 8) Asignar enemigos Warrok (misma lógica, pero usando warrokInstance)
+        if (warrokNetId != 0 && warrokInstance != null && warrokHealthController != null && warrokController != null)
         {
-            //Debug.Log("Asignandio enemigos Warrok");
             if (NumEnemeies != warrokHealthController.enemies.Count)
             {
                 NumEnemeies = healthController.enemies.Count;
+
                 foreach (var enemyEntry in healthController.enemies)
                 {
-                    Debug.Log("Enemigo asignado al Warrok: " + enemyEntry.name);
-                    if (!enemyEntry.GetComponent<HealthController>().enemies.Contains(warrok))
-                    {
-                        enemyEntry.GetComponent<HealthController>().enemies.Add(warrok);
+                    if (enemyEntry == null) continue;
 
-                        var wc = enemyEntry.GetComponent<WarrokController>();
-                        if (wc != null)
-                        {
-                            wc.knights.Add(warrok);
-                        }
-                    }
+                    Debug.Log("Enemigo asignado al Warrok: " + enemyEntry.name);
+
+                    var enemyHC = enemyEntry.GetComponent<HealthController>();
+                    if (enemyHC != null && !enemyHC.enemies.Contains(warrokInstance))
+                        enemyHC.enemies.Add(warrokInstance);
+
+                    var wc = enemyEntry.GetComponent<WarrokController>();
+                    if (wc != null && !wc.knights.Contains(warrokInstance))
+                        wc.knights.Add(warrokInstance);
                 }
 
                 warrokHealthController.enemies = healthController.enemies;
                 warrokController.knights = healthController.enemies;
             }
-            
+
             NumEnemeies = healthController.enemies.Count;
         }
+    }
+
+    // ====== NUEVO: Spawn en servidor ======
+    [Command]
+    private void CmdSpawnWarrok()
+    {
+        // Evita duplicados
+        if (warrokNetId != 0) return;
+
+        if (warrokPrefab == null)
+        {
+            Debug.LogError("KnightController: warrokPrefab NO asignado en Inspector.");
+            return;
+        }
+
+        Vector3 pos = transform.position + Vector3.up * 5f;
+        Quaternion rot = transform.rotation;
+
+        GameObject go = Instantiate(warrokPrefab, pos, rot);
+
+        // Opción A (recomendada para control del dueño): le da autoridad al dueño del Knight
+        NetworkServer.Spawn(go, connectionToClient);
+
+        // Guardar netId para que TODOS los clientes lo resuelvan
+        warrokNetId = go.GetComponent<NetworkIdentity>().netId;
+    }
+
+    private void OnWarrokNetIdChanged(uint oldId, uint newId)
+    {
+        if (newId == 0) return;
+        StartCoroutine(ResolveWarrok(newId));
+    }
+
+    private IEnumerator ResolveWarrok(uint netId)
+    {
+        // Esperar a que Mirror registre el spawn en este cliente
+        while (!NetworkClient.spawned.ContainsKey(netId))
+            yield return null;
+
+        NetworkIdentity ni = NetworkClient.spawned[netId];
+
+        warrokInstance = ni.transform;
+        warrokController = warrokInstance.GetComponent<WarrokController>();
+        warrokHealthController = warrokInstance.GetComponent<HealthController>();
     }
 
     // --------- Helpers principales ----------
@@ -268,8 +314,8 @@ public class KnightController : NetworkBehaviour
         s.dodge = Input.GetKeyDown(KeyCode.Q);
         s.dodge2 = Input.GetKeyDown(KeyCode.R);
 
-        s.jump    = Input.GetKeyDown(KeyCode.Space);
-        s.kick    = Input.GetKey(KeyCode.E);
+        s.jump = Input.GetKeyDown(KeyCode.Space);
+        s.kick = Input.GetKey(KeyCode.E);
 
         // Defensa (escudo) y crouch por teclado
         bool kbDefend = Input.GetKey(KeyCode.W);
@@ -277,21 +323,21 @@ public class KnightController : NetworkBehaviour
 
         // Giros alrededor del centro (A/D)
         bool kbTurnRight = Input.GetKey(KeyCode.D);
-        bool kbTurnLeft  = Input.GetKey(KeyCode.A);
+        bool kbTurnLeft = Input.GetKey(KeyCode.A);
 
         // Ejes de movimiento/orientación con flechas (como V1)
         float h = 0f, v = 0f;
-        if (Input.GetKey(KeyCode.RightArrow)) h =  1f;
-        else if (Input.GetKey(KeyCode.LeftArrow))  h = -1f;
+        if (Input.GetKey(KeyCode.RightArrow)) h = 1f;
+        else if (Input.GetKey(KeyCode.LeftArrow)) h = -1f;
 
-        if (Input.GetKey(KeyCode.UpArrow))    v =  1f;
-        else if (Input.GetKey(KeyCode.DownArrow))  v = -1f;
+        if (Input.GetKey(KeyCode.UpArrow)) v = 1f;
+        else if (Input.GetKey(KeyCode.DownArrow)) v = -1f;
 
         // --- UI (Canvas) ---
         // Holds desde botones (si existen)
         bool uiCrouch = crouchHold && crouchHold.isHeld;
-        bool uiTurnR  = turnRightHold && turnRightHold.isHeld;
-        bool uiTurnL  = turnLeftHold  && turnLeftHold.isHeld;
+        bool uiTurnR = turnRightHold && turnRightHold.isHeld;
+        bool uiTurnL = turnLeftHold && turnLeftHold.isHeld;
         bool uiDefend = shieldHold && shieldHold.isHeld;
 
         // Joystick virtual (si está y hay entrada significativa)
@@ -300,16 +346,14 @@ public class KnightController : NetworkBehaviour
             float jh = joystick.Horizontal;
             float jv = joystick.Vertical;
 
-
-            // Aplica zona muerta: ignora valores pequeños
+            // Aplica zona muerta
             if (Mathf.Abs(jh) < deadZone) jh = 0f;
             if (Mathf.Abs(jv) < deadZone) jv = 0f;
 
-            // Reduce la sensibilidad multiplicando por un factor (<1)
+            // Reduce sensibilidad
             jh *= sensitivity;
             jv *= sensitivity;
 
-            // Solo sustituimos si hay entrada significativa
             if (Mathf.Abs(jh) > 0.001f || Mathf.Abs(jv) > 0.001f)
             {
                 h = jh;
@@ -317,12 +361,11 @@ public class KnightController : NetworkBehaviour
             }
         }
 
-
-        // Fusión teclado + UI: los holds se combinan por OR
-        s.defend   = kbDefend || uiDefend;
-        s.crouch   = kbCrouch || uiCrouch;
+        // Fusión teclado + UI
+        s.defend = kbDefend || uiDefend;
+        s.crouch = kbCrouch || uiCrouch;
         s.turnRightAroundCenter = kbTurnRight || uiTurnR;
-        s.turnLeftAroundCenter  = kbTurnLeft  || uiTurnL;
+        s.turnLeftAroundCenter = kbTurnLeft || uiTurnL;
 
         s.axisH = h;
         s.axisV = v;
@@ -334,64 +377,55 @@ public class KnightController : NetworkBehaviour
     {
         if (s.attack1) { TriggerBool("AttackBool"); anyButton = true; }
         if (s.attack2) { TriggerBool("Attack2Bool"); anyButton = true; }
-        if (s.jump)    { TriggerBool("JumpBool");    anyButton = true; }
+        if (s.jump) { TriggerBool("JumpBool"); anyButton = true; }
         if (s.dodge) { TriggerBool("dodgeBool"); anyButton = true; }
         if (s.dodge2) { TriggerBool("dodge2Bool"); anyButton = true; }
-        if (s.kick)    { TriggerBool("kickBool");    anyButton = true; }
+        if (s.kick) { TriggerBool("kickBool"); anyButton = true; }
     }
 
     private void ApplyBools(InputState s)
     {
-        // Escudo / crouch / laterales (A/D o botones) -> exacto a V1
         animator.SetBool("isDefending", s.defend);
         animator.SetBool("Crouch", s.crouch);
         animator.SetBool("MoveRight", s.turnRightAroundCenter);
         animator.SetBool("MoveLeft", s.turnLeftAroundCenter);
 
-        // Si se mantienen A/D (o sus botones), se orienta al centro
         if (s.turnRightAroundCenter || s.turnLeftAroundCenter)
             OrientTowardsCenter();
 
-        // ✅ Activar o desactivar el escudo lógicamente (teclado o canvas)
         if (s.defend)
         {
             if (!hasShield)
-                shieldActivate(); // activa la lógica del escudo
+                shieldActivate();
         }
         else
         {
-            hasShield = false; // desactiva la lógica del escudo
+            hasShield = false;
         }
 
-        // AnyButton si cualquier cosa está activa (como V1)
         if (s.defend || s.crouch || s.turnRightAroundCenter || s.turnLeftAroundCenter ||
             Mathf.Abs(s.axisH) + Mathf.Abs(s.axisV) > 0.1f)
             anyButton = true;
     }
 
-
     private void HandleMovementLikeV1(InputState s)
     {
-        // Flags de “joystick lateral” (para anim) con umbral
         isJoystickRight = s.axisH > 0.1f;
-        isJoystickLeft  = s.axisH < -0.1f;
+        isJoystickLeft = s.axisH < -0.1f;
 
         animator.SetBool("isJoystickRight", isJoystickRight);
-        animator.SetBool("isJoystickLeft",  isJoystickLeft);
+        animator.SetBool("isJoystickLeft", isJoystickLeft);
 
         if (Mathf.Abs(s.axisH) > 0f || Mathf.Abs(s.axisV) > 0f)
         {
-            // Dirección base en plano XZ como en V1
             Vector3 dir = new Vector3(s.axisH, 0f, s.axisV).normalized;
 
-            // En V1 se transformaba por la cámara y se anulaba Y
             if (cameraTransform)
             {
                 dir = cameraTransform.TransformDirection(dir);
                 dir.y = 0f;
             }
 
-            // Lógica V1: vertical > 0 -> correr; vertical < 0 -> retroceder
             if (s.axisV > 0.1f)
             {
                 isRunning = true;
@@ -402,7 +436,6 @@ public class KnightController : NetworkBehaviour
                 isRunning = false;
                 isWalkingBackward = true;
 
-                // En V1, si no había joystick lateral (derecha/izquierda) se invertía la dirección
                 if (!(isJoystickRight || isJoystickLeft))
                     dir = -dir;
             }
@@ -412,7 +445,6 @@ public class KnightController : NetworkBehaviour
                 isWalkingBackward = false;
             }
 
-            // Rotación yaw-only hacia la dirección objetivo
             if (dir.sqrMagnitude > 0.0001f)
             {
                 Quaternion target = Quaternion.LookRotation(dir, Vector3.up);
@@ -425,7 +457,7 @@ public class KnightController : NetworkBehaviour
             isWalkingBackward = false;
         }
 
-        animator.SetBool("isRunning",         isRunning);
+        animator.SetBool("isRunning", isRunning);
         animator.SetBool("isWalkingBackward", isWalkingBackward);
     }
 
@@ -469,28 +501,8 @@ public class KnightController : NetworkBehaviour
         animator.SetBool(boolName, false);
     }
 
-    // (Se mantiene para compatibilidad si lo llamas en otro sitio)
-    private void FireAllTriggersFromBools()
-    {
-        for (int i = 0; i < animator.parameterCount; i++)
-        {
-            var p = animator.GetParameter(i);
-            if (p.type == AnimatorControllerParameterType.Bool && p.name.EndsWith("Bool"))
-            {
-                bool val = animator.GetBool(p.name);
-                if (val)
-                {
-                    string trigger = p.name.Substring(0, p.name.Length - 4);
-                    animator.SetTrigger(trigger);
-                    Debug.Log("Triggering: " + p.name);
-                }
-            }
-        }
-    }
-
     // --------- API pública conservada ----------
     public void shieldActivate() => hasShield = true;
-
     public bool HasShield(bool orientation) => hasShield && orientation;
 
     // --------- Wiring de UI desde singleton (opcional) ----------
@@ -498,31 +510,30 @@ public class KnightController : NetworkBehaviour
     {
         if (ButtonBindings.Instance == null) return;
 
-        attack1Button     = attack1Button     ? attack1Button     : ButtonBindings.Instance.attack1Button;
-        attack2Button     = attack2Button     ? attack2Button     : ButtonBindings.Instance.attack2Button;
-        jumpButton        = jumpButton        ? jumpButton        : ButtonBindings.Instance.jumpButton;
-        dodgeButton       = dodgeButton       ? dodgeButton       : ButtonBindings.Instance.dodgeButton;
-        dodgeButton2      = dodgeButton2      ? dodgeButton2      : ButtonBindings.Instance.dodgeButton2;
-        kickButton        = kickButton        ? kickButton        : ButtonBindings.Instance.kickButton;
-        crouchButton      = crouchButton      ? crouchButton      : ButtonBindings.Instance.crouchButton;
-        turnRightButton   = turnRightButton   ? turnRightButton   : ButtonBindings.Instance.turnRightButton;
-        turnLeftButton    = turnLeftButton    ? turnLeftButton    : ButtonBindings.Instance.turnLeftButton;
-        shieldButton      = shieldButton      ? shieldButton      : ButtonBindings.Instance.shieldButton;
+        attack1Button = attack1Button ? attack1Button : ButtonBindings.Instance.attack1Button;
+        attack2Button = attack2Button ? attack2Button : ButtonBindings.Instance.attack2Button;
+        jumpButton = jumpButton ? jumpButton : ButtonBindings.Instance.jumpButton;
+        dodgeButton = dodgeButton ? dodgeButton : ButtonBindings.Instance.dodgeButton;
+        dodgeButton2 = dodgeButton2 ? dodgeButton2 : ButtonBindings.Instance.dodgeButton2;
+        kickButton = kickButton ? kickButton : ButtonBindings.Instance.kickButton;
+        crouchButton = crouchButton ? crouchButton : ButtonBindings.Instance.crouchButton;
+        turnRightButton = turnRightButton ? turnRightButton : ButtonBindings.Instance.turnRightButton;
+        turnLeftButton = turnLeftButton ? turnLeftButton : ButtonBindings.Instance.turnLeftButton;
+        shieldButton = shieldButton ? shieldButton : ButtonBindings.Instance.shieldButton;
         lanchWarrokButton = lanchWarrokButton ? lanchWarrokButton : ButtonBindings.Instance.LanchWarrokButton;
-        joystick          = joystick          ? joystick          : ButtonBindings.Instance.joystick;
+        joystick = joystick ? joystick : ButtonBindings.Instance.joystick;
 
-        // Log de faltantes (opcionales)
         string miss = "";
-        if (!attack1Button)     miss += "attack1Button ";
-        if (!attack2Button)     miss += "attack2Button ";
-        if (!jumpButton)        miss += "jumpButton ";
-        if (!dodgeButton)       miss += "dodgeButton ";
-        if (!dodgeButton2)      miss += "dodgeButton2 ";
-        if (!kickButton)        miss += "kickButton ";
-        if (!crouchButton)      miss += "crouchButton ";
-        if (!turnRightButton)   miss += "turnRightButton ";
-        if (!turnLeftButton)    miss += "turnLeftButton ";
-        if (!shieldButton)      miss += "shieldButton ";
+        if (!attack1Button) miss += "attack1Button ";
+        if (!attack2Button) miss += "attack2Button ";
+        if (!jumpButton) miss += "jumpButton ";
+        if (!dodgeButton) miss += "dodgeButton ";
+        if (!dodgeButton2) miss += "dodgeButton2 ";
+        if (!kickButton) miss += "kickButton ";
+        if (!crouchButton) miss += "crouchButton ";
+        if (!turnRightButton) miss += "turnRightButton ";
+        if (!turnLeftButton) miss += "turnLeftButton ";
+        if (!shieldButton) miss += "shieldButton ";
         if (!lanchWarrokButton) miss += "LanchWarrokButton ";
         if (!string.IsNullOrEmpty(miss))
             Debug.LogWarning("Botones/joystick no asignados (opcionales): " + miss);

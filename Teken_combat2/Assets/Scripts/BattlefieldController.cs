@@ -112,11 +112,12 @@ public class BattlefieldController : MonoBehaviour
             }
         }
     }
-        private Transform InstantiateWarrok(Vector3 hemisphereDirection)
+    
+    private Transform InstantiateWarrok(Vector3 hemisphereDirection)
     {
         // Posición aleatoria en una semiesfera de radio límite
-	Vector3 randomPosition = Random.onUnitSphere * 5f;
-	randomPosition.y = Mathf.Clamp(randomPosition.y, 0, 5);
+        Vector3 randomPosition = Random.onUnitSphere * 5f;
+        randomPosition.y = Mathf.Clamp(randomPosition.y, 0, 5);
 
         // Instanciar Warrok y aplicar escala y poder
         Transform warrok = Instantiate(warrokPrefab, randomPosition, Quaternion.identity);
@@ -127,12 +128,12 @@ public class BattlefieldController : MonoBehaviour
         HealthController healthController = warrok.GetComponent<HealthController>();
         if (healthController != null) healthController.power = warrokPower;
 
-	if(warrokPower>1)
-	{
-	    limit*=warrokPower;
-	    warrok.GetComponent<RestrictToCircleMovement>().radius*= warrokPower;
-	}
+        if(warrokPower>1)
+        {
+            limit*=warrokPower;
+            warrok.GetComponent<RestrictToCircleMovement>().radius*= warrokPower;
+        }
 
-        return warrok;
-    }
+            return warrok;
+        }
 }
