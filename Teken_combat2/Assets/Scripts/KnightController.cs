@@ -207,12 +207,21 @@ public class KnightController : NetworkBehaviour
         // 6) AnyButton
         animator.SetBool("AnyButton", anyButton);
 
-        // 7) Lanzar Warrok (AHORA: spawn por servidor)
+        // 7) Lanzar Warrok
         if (lanchWarrok && !warrokLaunched)
         {
             lanchWarrok = false;
 
-            if (isLocalPlayer)
+            var ni = GetComponent<NetworkIdentity>();
+            bool isOffline = ni == null || !NetworkClient.active;
+
+            if (isOffline)
+            {
+                Debug.Log("Lanzando Warrok (offline)");
+                warrokLaunched = true;
+                SpawnWarrokOffline();
+            }
+            else if (isLocalPlayer)
             {
                 Debug.Log("Lanzando Warrok (networked)");
                 warrokLaunched = true;
@@ -221,7 +230,7 @@ public class KnightController : NetworkBehaviour
         }
 
         // 8) Asignar enemigos Warrok (misma lógica, pero usando warrokInstance)
-        if (warrokNetId != 0 && warrokInstance != null && warrokHealthController != null && warrokController != null)
+        if (warrokInstance != null && warrokHealthController != null && warrokController != null)
         {
             if (NumEnemeies != warrokHealthController.enemies.Count)
             {
@@ -275,6 +284,29 @@ public class KnightController : NetworkBehaviour
         warrokNetId = go.GetComponent<NetworkIdentity>().netId;
     }
 
+    private void SpawnWarrokOffline()
+    {
+        if (warrokPrefab == null)
+        {
+            Debug.LogError("KnightController: warrokPrefab NO asignado en Inspector.");
+            return;
+        }
+
+        Vector3 pos = transform.position + Vector3.up * 5f;
+        GameObject go = Instantiate(warrokPrefab, pos, transform.rotation);
+
+        warrokInstance = go.transform;
+        warrokController = go.GetComponent<WarrokController>();
+        warrokHealthController = go.GetComponent<HealthController>();
+
+        Transform lifeBarT = warrokInstance.Find("Canvas/background/LifeBar");
+        if (lifeBarT != null)
+        {
+            var img = lifeBarT.GetComponentInChildren<Image>(true);
+            if (img != null) img.color = Color.green;
+        }
+    }
+
     private void OnWarrokNetIdChanged(uint oldId, uint newId)
     {
         if (newId == 0) return;
@@ -292,12 +324,19 @@ public class KnightController : NetworkBehaviour
         warrokController = warrokInstance.GetComponent<WarrokController>();
         warrokHealthController = warrokInstance.GetComponent<HealthController>();
 
-        // ✅ Pintar barra verde (local en cada cliente)
+        Color barColor = Color.green;
+        if (!isLocalPlayer)
+        {
+            var localHC = NetworkClient.localPlayer?.GetComponent<HealthController>();
+            if (localHC != null && localHC.enemies.Contains(transform))
+                barColor = Color.red;
+        }
+
         Transform lifeBarT = warrokInstance.Find("Canvas/background/LifeBar");
         if (lifeBarT != null)
         {
             var img = lifeBarT.GetComponentInChildren<Image>(true);
-            if (img != null) img.color = Color.green;
+            if (img != null) img.color = barColor;
         }
     }
 
