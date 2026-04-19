@@ -94,6 +94,8 @@ public class KnightController : NetworkBehaviour
     [SyncVar(hook = nameof(OnWarrokNetIdChanged))]
     private uint warrokNetId;
 
+    public uint GetWarrokNetId() => warrokNetId;
+
     // --------- Estructura de entradas unificadas ----------
     private struct InputState
     {

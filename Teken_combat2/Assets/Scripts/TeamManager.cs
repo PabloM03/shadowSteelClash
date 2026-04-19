@@ -309,6 +309,18 @@ public class TeamManager : NetworkBehaviour
                 RpcUpdateEnemyList(knightNI.netId, enemyNetIds);
             }
         }
+
+        // Re-registrar Warroks existentes para que nuevos jugadores también los tengan como enemigos
+        foreach (var knight in allKnights)
+        {
+            var kc = knight.GetComponent<KnightController>();
+            if (kc == null) continue;
+            uint wNetId = kc.GetWarrokNetId();
+            if (wNetId == 0) continue;
+            var ni = knight.GetComponent<NetworkIdentity>();
+            if (ni != null)
+                RpcRegisterWarrok(wNetId, ni.netId);
+        }
     }
 
     [ClientRpc]
