@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -227,6 +228,52 @@ public class TeamManager : NetworkBehaviour
 
             hc.Die();
         }
+    }
+
+    // ====== Registro de Warroks ======
+
+    // Llamado por el owner del knight tras spawnear su warrok
+    [Command]
+    public void CmdRegisterWarrok(uint warrokNetId, uint ownerKnightNetId)
+    {
+        RpcRegisterWarrok(warrokNetId, ownerKnightNetId);
+    }
+
+    [ClientRpc]
+    private void RpcRegisterWarrok(uint warrokNetId, uint ownerKnightNetId)
+    {
+        StartCoroutine(ApplyWarrokRegistration(warrokNetId, ownerKnightNetId));
+    }
+
+    private IEnumerator ApplyWarrokRegistration(uint warrokNetId, uint ownerKnightNetId)
+    {
+        // Esperar a que ambos objetos estén disponibles en este cliente
+        while (!NetworkClient.spawned.ContainsKey(warrokNetId) || !NetworkClient.spawned.ContainsKey(ownerKnightNetId))
+            yield return null;
+
+        var warrokT = NetworkClient.spawned[warrokNetId].transform;
+        var ownerT = NetworkClient.spawned[ownerKnightNetId].transform;
+        var ownerHC = ownerT.GetComponent<HealthController>();
+        if (ownerHC == null) yield break;
+
+        // Solo actuar si el jugador local es enemigo del owner del warrok
+        var localPlayer = NetworkClient.localPlayer;
+        if (localPlayer == null) yield break;
+        if (!ownerHC.enemies.Contains(localPlayer.transform)) yield break;
+
+        var localHC = localPlayer.GetComponent<HealthController>();
+        var warrokHC = warrokT.GetComponent<HealthController>();
+        var warrokWC = warrokT.GetComponent<WarrokController>();
+
+        // El warrok me ataca a mí
+        if (warrokHC != null && !warrokHC.enemies.Contains(localPlayer.transform))
+            warrokHC.enemies.Add(localPlayer.transform);
+        if (warrokWC != null && !warrokWC.knights.Contains(localPlayer.transform))
+            warrokWC.knights.Add(localPlayer.transform);
+
+        // Yo recibo daño del warrok
+        if (localHC != null && !localHC.enemies.Contains(warrokT))
+            localHC.enemies.Add(warrokT);
     }
 
     // ====== Teams (tu lógica original, intacta) ======

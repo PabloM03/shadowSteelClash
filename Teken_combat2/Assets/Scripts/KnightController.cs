@@ -361,6 +361,15 @@ public class KnightController : NetworkBehaviour
     {
         if (newId == 0) return;
         StartCoroutine(ResolveWarrok(newId));
+
+        // El owner notifica al TeamManager para que propague la asignación a los enemigos
+        if (isLocalPlayer)
+        {
+            var tm = GetComponent<TeamManager>();
+            var ni = GetComponent<NetworkIdentity>();
+            if (tm != null && ni != null)
+                tm.CmdRegisterWarrok(newId, ni.netId);
+        }
     }
 
     private IEnumerator ResolveWarrok(uint netId)

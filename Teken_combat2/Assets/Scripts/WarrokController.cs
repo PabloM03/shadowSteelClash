@@ -66,13 +66,16 @@ public class WarrokController : NetworkBehaviour
                 if (!animator.enabled) return;
 
                 float distanceToKnight = Vector3.Distance(transform.position, knight.position);
-                animator.SetInteger("attackType", 0);
                 animator.SetFloat("distance", distanceToKnight);
 
                 if (distanceToKnight < maxDistance && distanceToKnight > minDistance)
                 {
                     animator.SetBool("run", true);
-                    wasInAttackRange = false;
+                    if (wasInAttackRange)
+                    {
+                        wasInAttackRange = false;
+                        animator.SetInteger("attackType", 0);
+                    }
                 }
                 else
                 {
@@ -88,7 +91,11 @@ public class WarrokController : NetworkBehaviour
                     }
                     else
                     {
-                        wasInAttackRange = false;
+                        if (wasInAttackRange)
+                        {
+                            wasInAttackRange = false;
+                            animator.SetInteger("attackType", 0);
+                        }
                     }
                 }
 
