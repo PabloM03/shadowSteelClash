@@ -751,6 +751,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ec1bacc380f4845948b040fb1d0490ff, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  syncDirection: 0
+  syncMode: 0
+  syncInterval: 0
   knights:
   - {fileID: 1122759217}
 --- !u!114 &285559984
@@ -17964,7 +17967,8 @@ MonoBehaviour:
   showButtons: 0
   deadZone: 0.25
   sensitivity: 0.6
-  warrok: {fileID: 285559986}
+  warrokPrefab: {fileID: 6081735645919461580, guid: 5bc4672bbcb71c54db2407a4c51ff51a,
+    type: 3}
 --- !u!1 &1155887064
 GameObject:
   m_ObjectHideFlags: 0
