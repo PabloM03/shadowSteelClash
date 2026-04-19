@@ -17,14 +17,13 @@ public class WarrokController : NetworkBehaviour
 
     // true cuando no hay NetworkIdentity (spawn offline local)
     private bool offlineMode;
-    private bool wasInAttackRange;
 
     private const float syncInterval = 0.05f; // 20 Hz
     private float nextSyncTime;
 
     void Start()
     {
-        offlineMode = GetComponent<NetworkIdentity>() == null;
+        offlineMode = GetComponent<NetworkIdentity>() == null || !NetworkClient.active;
         animator = GetComponent<Animator>();
         enabled = false;
         myParticleSystem = transform.Find("explosion").GetComponent<ParticleSystem>();
@@ -67,35 +66,19 @@ public class WarrokController : NetworkBehaviour
 
                 float distanceToKnight = Vector3.Distance(transform.position, knight.position);
                 animator.SetFloat("distance", distanceToKnight);
+                animator.SetInteger("attackType", 0);
 
                 if (distanceToKnight < maxDistance && distanceToKnight > minDistance)
                 {
                     animator.SetBool("run", true);
-                    if (wasInAttackRange)
-                    {
-                        wasInAttackRange = false;
-                        animator.SetInteger("attackType", 0);
-                    }
                 }
                 else
                 {
                     animator.SetBool("run", false);
                     if (distanceToKnight < minDistance)
                     {
-                        if (!wasInAttackRange)
-                        {
-                            wasInAttackRange = true;
-                            attackType = Random.Range(1, 7);
-                            animator.SetInteger("attackType", attackType);
-                        }
-                    }
-                    else
-                    {
-                        if (wasInAttackRange)
-                        {
-                            wasInAttackRange = false;
-                            animator.SetInteger("attackType", 0);
-                        }
+                        attackType = Random.Range(1, 7);
+                        animator.SetInteger("attackType", attackType);
                     }
                 }
 
