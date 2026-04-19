@@ -1,6 +1,8 @@
 using UnityEngine;
 using Mirror;
 using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
 using UnityEngine.Animations;
 using UnityEngine.UI;
 
@@ -253,6 +255,17 @@ public class KnightController : NetworkBehaviour
 
                 warrokHealthController.enemies = healthController.enemies;
                 warrokController.knights = healthController.enemies;
+
+                // Sincronizar asignación de enemigos a todos los clientes online
+                var ni = GetComponent<NetworkIdentity>();
+                if (ni != null && NetworkClient.active && isLocalPlayer)
+                {
+                    var enemyIds = healthController.enemies
+                        .Select(e => e?.GetComponent<NetworkIdentity>()?.netId ?? 0)
+                        .Where(id => id != 0)
+                        .ToArray();
+                    CmdSyncWarrokEnemies(warrokNetId, enemyIds);
+                }
             }
 
             NumEnemeies = healthController.enemies.Count;
@@ -305,6 +318,43 @@ public class KnightController : NetworkBehaviour
             var img = lifeBarT.GetComponentInChildren<Image>(true);
             if (img != null) img.color = Color.green;
         }
+    }
+
+    [Command]
+    private void CmdSyncWarrokEnemies(uint warrokId, uint[] enemyIds)
+    {
+        RpcSyncWarrokEnemies(warrokId, enemyIds);
+    }
+
+    [ClientRpc]
+    private void RpcSyncWarrokEnemies(uint warrokId, uint[] enemyIds)
+    {
+        if (isLocalPlayer) return; // el owner ya lo asignó localmente
+
+        if (!NetworkClient.spawned.TryGetValue(warrokId, out var warrokNI)) return;
+        var warrokT = warrokNI.transform;
+        var warrokHC = warrokT.GetComponent<HealthController>();
+        var warrokWC = warrokT.GetComponent<WarrokController>();
+
+        var enemies = new List<Transform>();
+
+        foreach (var id in enemyIds)
+        {
+            if (!NetworkClient.spawned.TryGetValue(id, out var enemyNI)) continue;
+            var enemyT = enemyNI.transform;
+            enemies.Add(enemyT);
+
+            var enemyHC = enemyT.GetComponent<HealthController>();
+            if (enemyHC != null && !enemyHC.enemies.Contains(warrokT))
+                enemyHC.enemies.Add(warrokT);
+
+            var enemyWC = enemyT.GetComponent<WarrokController>();
+            if (enemyWC != null && !enemyWC.knights.Contains(warrokT))
+                enemyWC.knights.Add(warrokT);
+        }
+
+        if (warrokHC != null) warrokHC.enemies = enemies;
+        if (warrokWC != null) warrokWC.knights = enemies;
     }
 
     private void OnWarrokNetIdChanged(uint oldId, uint newId)

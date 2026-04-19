@@ -17,6 +17,7 @@ public class WarrokController : NetworkBehaviour
 
     // true cuando no hay NetworkIdentity (spawn offline local)
     private bool offlineMode;
+    private bool wasInAttackRange;
 
     private const float syncInterval = 0.05f; // 20 Hz
     private float nextSyncTime;
@@ -71,14 +72,23 @@ public class WarrokController : NetworkBehaviour
                 if (distanceToKnight < maxDistance && distanceToKnight > minDistance)
                 {
                     animator.SetBool("run", true);
+                    wasInAttackRange = false;
                 }
                 else
                 {
                     animator.SetBool("run", false);
                     if (distanceToKnight < minDistance)
                     {
-                        attackType = Random.Range(1, 7);
-                        animator.SetInteger("attackType", attackType);
+                        if (!wasInAttackRange)
+                        {
+                            wasInAttackRange = true;
+                            attackType = Random.Range(1, 7);
+                            animator.SetInteger("attackType", attackType);
+                        }
+                    }
+                    else
+                    {
+                        wasInAttackRange = false;
                     }
                 }
 
