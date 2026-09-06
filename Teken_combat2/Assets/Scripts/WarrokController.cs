@@ -14,17 +14,31 @@ public class WarrokController : NetworkBehaviour
     private ParticleSystem myParticleSystem;
     private ParticleSystem fireAttack;
     private Transform knight;
+    private HealthController healthController;
 
-    // true cuando no hay NetworkIdentity (spawn offline local)
+    // true cuando no hay red en absoluto (spawn offline local)
     private bool offlineMode;
 
-    private const float syncInterval = 0.05f; // 20 Hz
-    private float nextSyncTime;
+    // La vida no viaja por NetworkAnimator, asi que se replica aparte: el dueño
+    // la reporta al servidor y el SyncVar la reparte al resto. Empieza en -1
+    // para distinguir "todavia no ha llegado nada" de una vida real de 0.
+    [SyncVar(hook = nameof(OnHealthChanged))]
+    private float syncedHealth = -1f;
+
+    private const float healthSyncInterval = 0.2f; // 5 Hz: la vida cambia a golpes
+    private float nextHealthSync;
+    private float lastReportedHealth = float.NaN;
 
     void Start()
     {
-        offlineMode = GetComponent<NetworkIdentity>() == null || !NetworkClient.active;
+        // Ojo con offlineMode: en un servidor dedicado NetworkClient.active es
+        // false, asi que mirarlo a solas lo daba por offline y el servidor movia
+        // al Warrok por su cuenta, divergiendo del cliente que tiene autoridad.
+        NetworkIdentity ni = GetComponent<NetworkIdentity>();
+        offlineMode = ni == null || (!NetworkServer.active && !NetworkClient.active);
+
         animator = GetComponent<Animator>();
+        healthController = GetComponent<HealthController>();
         enabled = false;
         myParticleSystem = transform.Find("explosion").GetComponent<ParticleSystem>();
         fireAttack = GetComponentsInChildren<ParticleSystem>()[0];
@@ -92,36 +106,46 @@ public class WarrokController : NetworkBehaviour
             }
         }
 
-        // Enviar estado al servidor para que lo redistribuya a todos
-        if (!offlineMode && isOwned && Time.time >= nextSyncTime)
-        {
-            nextSyncTime = Time.time + syncInterval;
-            CmdSyncState(
-                transform.position,
-                transform.rotation,
-                animator.GetBool("run"),
-                animator.GetFloat("distance"),
-                animator.GetInteger("attackType")
-            );
-        }
+        ReportarVidaSiCambio();
+    }
+
+    // ---------- Sincronizacion ----------
+    // Posicion y rotacion las lleva NetworkTransformHybrid.
+    // Parametros y triggers del animator, NetworkAnimator.
+    // Aqui solo queda la vida, que no cubre ninguno de los dos.
+
+    private void ReportarVidaSiCambio()
+    {
+        if (offlineMode || !isOwned || healthController == null) return;
+        if (Time.time < nextHealthSync) return;
+
+        nextHealthSync = Time.time + healthSyncInterval;
+
+        float actual = healthController.Health;
+        if (!float.IsNaN(lastReportedHealth) && Mathf.Approximately(actual, lastReportedHealth))
+            return;
+
+        lastReportedHealth = actual;
+        CmdReportHealth(actual);
     }
 
     [Command]
-    private void CmdSyncState(Vector3 pos, Quaternion rot, bool run, float distance, int attackType)
+    private void CmdReportHealth(float value)
     {
-        RpcSyncState(pos, rot, run, distance, attackType);
+        syncedHealth = value;
     }
 
-    [ClientRpc]
-    private void RpcSyncState(Vector3 pos, Quaternion rot, bool run, float distance, int attackType)
+    private void OnHealthChanged(float anterior, float nueva)
     {
-        if (isOwned) return; // el dueño ya tiene los valores correctos
+        // El dueño ya tiene el valor bueno; esto es solo para los demas.
+        if (isOwned || nueva < 0f) return;
 
-        transform.position = pos;
-        transform.rotation = rot;
-        animator.SetBool("run", run);
-        animator.SetFloat("distance", distance);
-        animator.SetInteger("attackType", attackType);
+        // El hook puede llegar antes de que Start() haya corrido.
+        if (healthController == null)
+            healthController = GetComponent<HealthController>();
+
+        if (healthController != null)
+            healthController.SetHealthFromNetwork(nueva);
     }
 
     private Transform GetClosestKnight()

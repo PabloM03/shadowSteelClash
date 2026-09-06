@@ -383,6 +383,29 @@ public class HealthController : MonoBehaviour
     }
 
 
+    // Aplica la vida que llega replicada desde el dueño del personaje.
+    // No reproduce sonidos ni reacciones: los triggers del animator ya viajan
+    // por NetworkAnimator, y duplicarlos aqui los dispararia dos veces.
+    public void SetHealthFromNetwork(float value)
+    {
+        if (Mathf.Approximately(health, value)) return;
+
+        health = value;
+
+        if (animator != null)
+            animator.SetFloat("health", health);
+
+        // Start() puede no haber corrido aun cuando llega el primer valor.
+        if (lifeOfBar != null && maxHealth > 0f)
+            LifeOfBar();
+
+        // La muerte no es solo animacion: tambien apaga collider, rigidbody y
+        // barra de vida, y eso hay que hacerlo en cada maquina.
+        if (health <= 0f && live && animator != null)
+            Die();
+    }
+
+
     public void ActivateShield(float duration)
     {
 	    StartCoroutine(TemporarilySetTrue(duration)); // Inicia la corutina al inicio
