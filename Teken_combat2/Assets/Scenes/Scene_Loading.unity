@@ -905,50 +905,6 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1192760982}
   m_CullTransparentMesh: 1
---- !u!1 &1415283306
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1415283307}
-  - component: {fileID: 1415283308}
-  m_Layer: 0
-  m_Name: SalaManager
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &1415283307
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1415283306}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 896.52014, y: 487.97086, z: -12.5182295}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1415283308
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1415283306}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 750c5f99dcf3d594c9dd770f8b2ea183, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!1 &1630786893
 GameObject:
   m_ObjectHideFlags: 0
@@ -1600,20 +1556,7 @@ MonoBehaviour:
   m_TargetGraphic: {fileID: 1904162057}
   m_OnClick:
     m_PersistentCalls:
-      m_Calls:
-      - m_Target: {fileID: 4703224382148220739, guid: cdc22f90c4b492f4882292766a5dc546,
-          type: 3}
-        m_TargetAssemblyTypeName: UnirseManager, Assembly-CSharp
-        m_MethodName: empezarUnirse
-        m_Mode: 1
-        m_Arguments:
-          m_ObjectArgument: {fileID: 0}
-          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
-          m_IntArgument: 0
-          m_FloatArgument: 0
-          m_StringArgument: 
-          m_BoolArgument: 0
-        m_CallState: 2
+      m_Calls: []
 --- !u!114 &1904162057
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2135,6 +2078,5 @@ SceneRoots:
   - {fileID: 1847148972}
   - {fileID: 756882906}
   - {fileID: 1905658069}
-  - {fileID: 1415283307}
   - {fileID: 254072797}
   - {fileID: 1956264624}
