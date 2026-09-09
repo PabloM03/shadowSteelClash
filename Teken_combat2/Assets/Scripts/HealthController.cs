@@ -223,7 +223,14 @@ public class HealthController : MonoBehaviour
 
     internal void Die()
     {
-        if (live) Debug.Log(this.gameObject.name + " ha muerto.");
+        // Update() llama aqui en cada frame mientras el personaje esta muerto, y
+        // HealthUpdate tambien entra si le pegan a un cadaver. Antes daba igual
+        // porque el trigger se quedaba en local sobre un animator desactivado,
+        // pero ahora se replica por red: sin este guard la animacion de muerte
+        // se repite en los demas clientes cada vez que golpean al muerto.
+        if (!live) return;
+
+        Debug.Log(this.gameObject.name + " ha muerto.");
         ClearTrigger("win");
         FireTrigger("death");
         live = false;

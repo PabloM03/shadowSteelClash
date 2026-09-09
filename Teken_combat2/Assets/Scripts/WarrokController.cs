@@ -25,6 +25,11 @@ public class WarrokController : NetworkBehaviour
     [SyncVar(hook = nameof(OnHealthChanged))]
     private float syncedHealth = -1f;
 
+    // Sync manual de estado, restaurado tal como estaba en c8f885a. Convive con
+    // NetworkTransformHybrid y NetworkAnimator, que cubren lo mismo por su cuenta.
+    private const float estadoSyncInterval = 0.05f; // 20 Hz
+    private float nextSyncTime;
+
     private const float healthSyncInterval = 0.2f; // 5 Hz: la vida cambia a golpes
     private float nextHealthSync;
     private float lastReportedHealth = float.NaN;
@@ -106,13 +111,43 @@ public class WarrokController : NetworkBehaviour
             }
         }
 
+        // Enviar estado al servidor para que lo redistribuya a todos
+        if (!offlineMode && isOwned && Time.time >= nextSyncTime)
+        {
+            nextSyncTime = Time.time + estadoSyncInterval;
+            CmdSyncState(
+                transform.position,
+                transform.rotation,
+                animator.GetBool("run"),
+                animator.GetFloat("distance"),
+                animator.GetInteger("attackType")
+            );
+        }
+
         ReportarVidaSiCambio();
     }
 
+    [Command]
+    private void CmdSyncState(Vector3 pos, Quaternion rot, bool run, float distance, int attackType)
+    {
+        RpcSyncState(pos, rot, run, distance, attackType);
+    }
+
+    [ClientRpc]
+    private void RpcSyncState(Vector3 pos, Quaternion rot, bool run, float distance, int attackType)
+    {
+        if (isOwned) return; // el dueño ya tiene los valores correctos
+
+        transform.position = pos;
+        transform.rotation = rot;
+        animator.SetBool("run", run);
+        animator.SetFloat("distance", distance);
+        animator.SetInteger("attackType", attackType);
+    }
+
     // ---------- Sincronizacion ----------
-    // Posicion y rotacion las lleva NetworkTransformHybrid.
-    // Parametros y triggers del animator, NetworkAnimator.
-    // Aqui solo queda la vida, que no cubre ninguno de los dos.
+    // La vida no la cubren ni NetworkTransformHybrid ni NetworkAnimator, asi
+    // que va aparte por SyncVar.
 
     private void ReportarVidaSiCambio()
     {
