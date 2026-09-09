@@ -21,18 +21,6 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # La VM tiene 952 MB. Subir el build (~35 MB) mientras el servidor sigue
-      # corriendo y ocupando ~250 MB la deja sin margen: el 2026-09-06 se colgo
-      # justo durante un despliegue. Pararlo antes libera esa memoria y ademas
-      # evita sobrescribir ficheros de un proceso vivo.
-      - name: Stop Unity service before upload
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: sudo systemctl stop tekencombat.service || true
-
       # Subir SOLO contenido de builds/, no la carpeta builds entera
       - name: Upload Unity build to server
         uses: appleboy/scp-action@v0.1.7

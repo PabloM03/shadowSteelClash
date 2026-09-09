@@ -17126,7 +17126,6 @@ GameObject:
   - component: {fileID: 5386715511987082712}
   - component: {fileID: 5449427327444681574}
   - component: {fileID: 3381827418582691313}
-  - component: {fileID: 6963010960737393631}
   m_Layer: 0
   m_Name: Warrok
   m_TagString: Untagged
@@ -17221,9 +17220,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ec1bacc380f4845948b040fb1d0490ff, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  syncDirection: 0
-  syncMode: 0
-  syncInterval: 0
   knights:
   - {fileID: 0}
 --- !u!114 &3849754742902516323
@@ -17346,23 +17342,6 @@ MonoBehaviour:
   showGizmos: 0
   showOverlay: 0
   overlayColor: {r: 0, g: 0, b: 0, a: 0.5}
---- !u!114 &6963010960737393631
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6081735645919461580}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 7f6f3bf89aa97405989c802ba270f815, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  syncDirection: 1
-  syncMode: 0
-  syncInterval: 0
-  clientAuthority: 1
-  animator: {fileID: 706315415882678284}
 --- !u!1 &6253720257193137384
 GameObject:
   m_ObjectHideFlags: 0

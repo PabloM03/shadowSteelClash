@@ -14,36 +14,17 @@ public class WarrokController : NetworkBehaviour
     private ParticleSystem myParticleSystem;
     private ParticleSystem fireAttack;
     private Transform knight;
-    private HealthController healthController;
 
-    // true cuando no hay red en absoluto (spawn offline local)
+    // true cuando no hay NetworkIdentity (spawn offline local)
     private bool offlineMode;
 
-    // La vida no viaja por NetworkAnimator, asi que se replica aparte: el dueño
-    // la reporta al servidor y el SyncVar la reparte al resto. Empieza en -1
-    // para distinguir "todavia no ha llegado nada" de una vida real de 0.
-    [SyncVar(hook = nameof(OnHealthChanged))]
-    private float syncedHealth = -1f;
-
-    // Sync manual de estado, restaurado tal como estaba en c8f885a. Convive con
-    // NetworkTransformHybrid y NetworkAnimator, que cubren lo mismo por su cuenta.
-    private const float estadoSyncInterval = 0.05f; // 20 Hz
+    private const float syncInterval = 0.05f; // 20 Hz
     private float nextSyncTime;
-
-    private const float healthSyncInterval = 0.2f; // 5 Hz: la vida cambia a golpes
-    private float nextHealthSync;
-    private float lastReportedHealth = float.NaN;
 
     void Start()
     {
-        // Ojo con offlineMode: en un servidor dedicado NetworkClient.active es
-        // false, asi que mirarlo a solas lo daba por offline y el servidor movia
-        // al Warrok por su cuenta, divergiendo del cliente que tiene autoridad.
-        NetworkIdentity ni = GetComponent<NetworkIdentity>();
-        offlineMode = ni == null || (!NetworkServer.active && !NetworkClient.active);
-
+        offlineMode = GetComponent<NetworkIdentity>() == null || !NetworkClient.active;
         animator = GetComponent<Animator>();
-        healthController = GetComponent<HealthController>();
         enabled = false;
         myParticleSystem = transform.Find("explosion").GetComponent<ParticleSystem>();
         fireAttack = GetComponentsInChildren<ParticleSystem>()[0];
@@ -114,7 +95,7 @@ public class WarrokController : NetworkBehaviour
         // Enviar estado al servidor para que lo redistribuya a todos
         if (!offlineMode && isOwned && Time.time >= nextSyncTime)
         {
-            nextSyncTime = Time.time + estadoSyncInterval;
+            nextSyncTime = Time.time + syncInterval;
             CmdSyncState(
                 transform.position,
                 transform.rotation,
@@ -123,8 +104,6 @@ public class WarrokController : NetworkBehaviour
                 animator.GetInteger("attackType")
             );
         }
-
-        ReportarVidaSiCambio();
     }
 
     [Command]
@@ -143,44 +122,6 @@ public class WarrokController : NetworkBehaviour
         animator.SetBool("run", run);
         animator.SetFloat("distance", distance);
         animator.SetInteger("attackType", attackType);
-    }
-
-    // ---------- Sincronizacion ----------
-    // La vida no la cubren ni NetworkTransformHybrid ni NetworkAnimator, asi
-    // que va aparte por SyncVar.
-
-    private void ReportarVidaSiCambio()
-    {
-        if (offlineMode || !isOwned || healthController == null) return;
-        if (Time.time < nextHealthSync) return;
-
-        nextHealthSync = Time.time + healthSyncInterval;
-
-        float actual = healthController.Health;
-        if (!float.IsNaN(lastReportedHealth) && Mathf.Approximately(actual, lastReportedHealth))
-            return;
-
-        lastReportedHealth = actual;
-        CmdReportHealth(actual);
-    }
-
-    [Command]
-    private void CmdReportHealth(float value)
-    {
-        syncedHealth = value;
-    }
-
-    private void OnHealthChanged(float anterior, float nueva)
-    {
-        // El dueño ya tiene el valor bueno; esto es solo para los demas.
-        if (isOwned || nueva < 0f) return;
-
-        // El hook puede llegar antes de que Start() haya corrido.
-        if (healthController == null)
-            healthController = GetComponent<HealthController>();
-
-        if (healthController != null)
-            healthController.SetHealthFromNetwork(nueva);
     }
 
     private Transform GetClosestKnight()
