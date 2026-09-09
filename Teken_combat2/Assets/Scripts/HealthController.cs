@@ -27,6 +27,7 @@ public class HealthController : MonoBehaviour
 
 
     private Animator animator; // Declarar la variable Animator
+    private NetworkAnimator netAnimator; // opcional: solo si el objeto se replica
     public float power=1f;
     private Sounds sounds;
 
@@ -35,6 +36,7 @@ public class HealthController : MonoBehaviour
     {
         // Inicializar el Animator obteniéndolo del mismo objeto
         animator = GetComponent<Animator>();
+        netAnimator = GetComponent<NetworkAnimator>();
         live = true;
         iddle = false;
         health *= power;
@@ -61,7 +63,7 @@ public class HealthController : MonoBehaviour
                 // Verifica si el enemigo está derrotado y si aún no se ha activado "win" para él
                 if (enemyHealth.Health <= 0 && health > 0 && live && !defeatedEnemies.Contains(enemy))
                 {
-                    animator.SetTrigger("win");
+                    FireTrigger("win");
                     defeatedEnemies.Add(enemy); // Marca el enemigo como derrotado
                 }
             }
@@ -88,7 +90,7 @@ public class HealthController : MonoBehaviour
 
         if(health<0 && iddle)
         {
-            animator.SetTrigger("death");
+            FireTrigger("death");
         }
 
         iddle=false;
@@ -196,7 +198,7 @@ public class HealthController : MonoBehaviour
         {
 	    Debug.Log(this.gameObject.name + " tiene escudo activo. No se aplicará daño. Vida: " + health);
 	
-        animator.SetTrigger("shieldReaction");
+        FireTrigger("shieldReaction");
         sounds.ShieldSound();
 	
             return;
@@ -215,15 +217,22 @@ public class HealthController : MonoBehaviour
 	    return;
         }
 
-	    animator.SetTrigger("coupReaction");
+	    FireTrigger("coupReaction");
     }
 
 
     internal void Die()
     {
-        if (live) Debug.Log(this.gameObject.name + " ha muerto.");
-        animator.ResetTrigger("win");
-        animator.SetTrigger("death");
+        // Update() llama aqui en cada frame mientras el personaje esta muerto, y
+        // HealthUpdate tambien entra si le pegan a un cadaver. Antes daba igual
+        // porque el trigger se quedaba en local sobre un animator desactivado,
+        // pero ahora se replica por red: sin este guard la animacion de muerte
+        // se repite en los demas clientes cada vez que golpean al muerto.
+        if (!live) return;
+
+        Debug.Log(this.gameObject.name + " ha muerto.");
+        ClearTrigger("win");
+        FireTrigger("death");
         live = false;
         y = 0;
         
@@ -263,7 +272,7 @@ public class HealthController : MonoBehaviour
             // Desactivar NetworkTransformHybrid para evitar problemas de sincronización
             if (GetComponent<NetworkTransformHybrid>() != null)
             GetComponent<NetworkTransformHybrid>().enabled = false;
-            animator.ResetTrigger("resucitate");
+            ClearTrigger("resucitate");
         }
     }
 
@@ -273,7 +282,7 @@ public class HealthController : MonoBehaviour
         if (netIdentity != null && netIdentity.isClient && netIdentity.isClientOnly && netIdentity.isLocalPlayer == false && netIdentity.isServer == false)
             return; // Si no es el jugador local, no ejecutar la animación de muerte
         animator.enabled = false;
-        animator.SetTrigger("death");
+        FireTrigger("death");
     }
 
 
@@ -316,7 +325,7 @@ public class HealthController : MonoBehaviour
 
     public void ResetWin()
     {
-	animator.ResetTrigger("win");
+	ClearTrigger("win");
     }
 
     // Resucitar si la vida es mayor que 0 y actualmente está marcado como muerto (live == false)
@@ -326,8 +335,8 @@ public class HealthController : MonoBehaviour
         Debug.Log("Resucitate Check - Vida: " + health + ", live: " + live);
         //lanza un bool para resucitar animacion
         
-        animator.ResetTrigger("death");
-        animator.SetTrigger("resucitate");
+        ClearTrigger("death");
+        FireTrigger("resucitate");
         // Reactivar NetworkTransformHybrid para la sincronización
         if (GetComponent<NetworkTransformHybrid>() != null)
         GetComponent<NetworkTransformHybrid>().enabled = true;
@@ -336,7 +345,7 @@ public class HealthController : MonoBehaviour
         if (animator != null)
         {
             animator.enabled = true;
-            animator.ResetTrigger("death");
+            ClearTrigger("death");
         }
 
         // Reactivar barra de vida (Canvas/background)
@@ -383,6 +392,29 @@ public class HealthController : MonoBehaviour
     }
 
 
+    // Aplica la vida que llega replicada desde el dueño del personaje.
+    // No reproduce sonidos ni reacciones: los triggers del animator ya viajan
+    // por NetworkAnimator, y duplicarlos aqui los dispararia dos veces.
+    public void SetHealthFromNetwork(float value)
+    {
+        if (Mathf.Approximately(health, value)) return;
+
+        health = value;
+
+        if (animator != null)
+            animator.SetFloat("health", health);
+
+        // Start() puede no haber corrido aun cuando llega el primer valor.
+        if (lifeOfBar != null && maxHealth > 0f)
+            LifeOfBar();
+
+        // La muerte no es solo animacion: tambien apaga collider, rigidbody y
+        // barra de vida, y eso hay que hacerlo en cada maquina.
+        if (health <= 0f && live && animator != null)
+            Die();
+    }
+
+
     public void ActivateShield(float duration)
     {
 	    StartCoroutine(TemporarilySetTrue(duration)); // Inicia la corutina al inicio
@@ -393,5 +425,34 @@ public class HealthController : MonoBehaviour
 	shield = true;
         yield return new WaitForSeconds(seconds); // Espera el tiempo especificado
         shield = false; // Cambia la variable a false
+    }
+
+    // Mirror NO replica los triggers del Animator por su cuenta: hay que
+    // dispararlos a traves de NetworkAnimator. Los parametros bool, float e int
+    // si viajan solos, y por eso el Knight (que solo usa SetBool) se veia bien
+    // mientras estas reacciones se quedaban en local.
+    // Si no hay red, o si no somos el cliente dueño, se dispara en local: el no
+    // dueño lo recibira replicado desde quien tiene la autoridad.
+    private void FireTrigger(string triggerName)
+    {
+        if (PuedeReplicarTriggers())
+            netAnimator.SetTrigger(triggerName);
+        else
+            animator.SetTrigger(triggerName);
+    }
+
+    private void ClearTrigger(string triggerName)
+    {
+        if (PuedeReplicarTriggers())
+            netAnimator.ResetTrigger(triggerName);
+        else
+            animator.ResetTrigger(triggerName);
+    }
+
+    // NetworkAnimator con clientAuthority solo acepta triggers del cliente
+    // dueño; en cualquier otro caso avisa por consola y los descarta.
+    private bool PuedeReplicarTriggers()
+    {
+        return netAnimator != null && NetworkClient.active && netAnimator.isOwned;
     }
 }

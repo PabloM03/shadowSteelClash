@@ -12,6 +12,9 @@ UserSettings/
 *.user
 *.userprefs
 
+# Logs de Unity (ruido, se regeneran solos)
+[Ll]ogs/
+
 # Plugins
 [Tt]eken_combat2/buildServer/**
 
@@ -19,10 +22,16 @@ UserSettings/
 *.pidb
 *.pdb
 *.mdb
-*.apk
 *.aab
 *.unitypackage
 sysinfo.txt
 .vscode/
 .vs/
 
+# Artefactos de build Android que no deben distribuirse
+**/*_BurstDebugInformation_DoNotShip/
+*.apk
+/apk/
+
+# Config local de Claude Code (por maquina)
+.claude/

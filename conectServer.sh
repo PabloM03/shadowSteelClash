@@ -1,0 +1,1 @@
+ssh -i "C:\Users\Pablom03\oracle\ssh-key-2025-06-22.key" ubuntu@170.9.41.25
