@@ -16,6 +16,15 @@ public class WarrokController : NetworkBehaviour
     private Transform knight;
     private HealthController healthController;
 
+    // Los ataques salen de Idle segun attackType y vuelven a Idle al terminar la
+    // animacion. Sorteamos uno nuevo justo al volver a Idle, de modo que cada
+    // ataque dura lo que dure su animacion y el valor se mantiene estable
+    // mientras tanto. Sortearlo en cada frame, como se hacia antes, cambiaba el
+    // parametro mas rapido de lo que se replica y cada cliente acababa
+    // reproduciendo un ataque distinto.
+    [SerializeField] private string estadoIdle = "Mutant Idle";
+    private bool estabaEnIdle;
+
     // true cuando no hay red en absoluto (spawn offline local)
     private bool offlineMode;
 
@@ -85,7 +94,8 @@ public class WarrokController : NetworkBehaviour
 
                 float distanceToKnight = Vector3.Distance(transform.position, knight.position);
                 animator.SetFloat("distance", distanceToKnight);
-                animator.SetInteger("attackType", 0);
+
+                bool enRango = distanceToKnight < minDistance;
 
                 if (distanceToKnight < maxDistance && distanceToKnight > minDistance)
                 {
@@ -94,12 +104,26 @@ public class WarrokController : NetworkBehaviour
                 else
                 {
                     animator.SetBool("run", false);
-                    if (distanceToKnight < minDistance)
-                    {
-                        attackType = Random.Range(1, 7);
-                        animator.SetInteger("attackType", attackType);
-                    }
                 }
+
+                bool enIdle = animator.GetCurrentAnimatorStateInfo(0).IsName(estadoIdle);
+
+                if (enRango)
+                {
+                    // Se sortea al empezar y despues solo en el flanco de vuelta a
+                    // Idle, que es cuando el ataque anterior ha terminado.
+                    if (attackType == 0 || (enIdle && !estabaEnIdle))
+                        attackType = Random.Range(1, 7);
+
+                    animator.SetInteger("attackType", attackType);
+                }
+                else
+                {
+                    attackType = 0;
+                    animator.SetInteger("attackType", 0);
+                }
+
+                estabaEnIdle = enIdle;
 
                 Vector3 directionToKnight = (knight.position - transform.position).normalized;
                 Quaternion lookRotation = Quaternion.LookRotation(directionToKnight);
@@ -108,6 +132,8 @@ public class WarrokController : NetworkBehaviour
             else
             {
                 animator.SetBool("run", false);
+                animator.SetInteger("attackType", 0);
+                attackType = 0;
             }
         }
 

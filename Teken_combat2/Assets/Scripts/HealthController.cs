@@ -75,15 +75,17 @@ public class HealthController : MonoBehaviour
 
         //defeatedEnemies.RemoveWhere(e => e == null || !enemies.Contains(e));
 
+        bool mandoYo = MandaLasAnimaciones();
+
         if (defeatedEnemies.Count == enemiesCount)
         {
-            animator.SetBool("WIN", true);
+            if (mandoYo) animator.SetBool("WIN", true);
             if (lifeOfBar != null && lifeOfBar.transform != null && lifeOfBar.transform.parent != null)
                 lifeOfBar.transform.parent.transform.gameObject.SetActive(false);
         }
         else
         {
-            animator.SetBool("WIN", false);
+            if (mandoYo) animator.SetBool("WIN", false);
             if (live && lifeOfBar != null && lifeOfBar.transform != null && lifeOfBar.transform.parent != null)
                 lifeOfBar.transform.parent.gameObject.SetActive(true);
         }
@@ -435,6 +437,10 @@ public class HealthController : MonoBehaviour
     // dueño lo recibira replicado desde quien tiene la autoridad.
     private void FireTrigger(string triggerName)
     {
+        // Quien no manda no dispara nada: le llegara replicado. Si lo disparase
+        // aqui ademas, cada instancia animaria por su cuenta y se duplicaria.
+        if (!MandaLasAnimaciones()) return;
+
         if (PuedeReplicarTriggers())
             netAnimator.SetTrigger(triggerName);
         else
@@ -443,10 +449,22 @@ public class HealthController : MonoBehaviour
 
     private void ClearTrigger(string triggerName)
     {
+        if (!MandaLasAnimaciones()) return;
+
         if (PuedeReplicarTriggers())
             netAnimator.ResetTrigger(triggerName);
         else
             animator.ResetTrigger(triggerName);
+    }
+
+    // Solo la instancia con autoridad decide las animaciones; las demas las
+    // reciben. Sin red manda siempre la local. En el servidor dedicado tampoco
+    // manda, porque la autoridad la tiene el cliente dueno.
+    private bool MandaLasAnimaciones()
+    {
+        if (netAnimator == null) return true;
+        if (!NetworkClient.active && !NetworkServer.active) return true;
+        return netAnimator.isOwned;
     }
 
     // NetworkAnimator con clientAuthority solo acepta triggers del cliente
