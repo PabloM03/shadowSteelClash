@@ -16,26 +16,18 @@ public class WarrokController : NetworkBehaviour
     private Transform knight;
     private HealthController healthController;
 
-    // Los ataques salen de Idle segun attackType y vuelven a Idle al terminar la
-    // animacion. Sorteamos uno nuevo justo al volver a Idle, de modo que cada
-    // ataque dura lo que dure su animacion y el valor se mantiene estable
-    // mientras tanto. Sortearlo en cada frame, como se hacia antes, cambiaba el
-    // parametro mas rapido de lo que se replica y cada cliente acababa
-    // reproduciendo un ataque distinto.
+
     [SerializeField] private string estadoIdle = "Mutant Idle";
     private bool estabaEnIdle;
 
     // true cuando no hay red en absoluto (spawn offline local)
     private bool offlineMode;
 
-    // La vida no viaja por NetworkAnimator, asi que se replica aparte: el dueño
-    // la reporta al servidor y el SyncVar la reparte al resto. Empieza en -1
-    // para distinguir "todavia no ha llegado nada" de una vida real de 0.
+    
     [SyncVar(hook = nameof(OnHealthChanged))]
     private float syncedHealth = -1f;
 
-    // Sync manual de estado, restaurado tal como estaba en c8f885a. Convive con
-    // NetworkTransformHybrid y NetworkAnimator, que cubren lo mismo por su cuenta.
+   
     private const float estadoSyncInterval = 0.05f; // 20 Hz
     private float nextSyncTime;
 
@@ -45,9 +37,7 @@ public class WarrokController : NetworkBehaviour
 
     void Start()
     {
-        // Ojo con offlineMode: en un servidor dedicado NetworkClient.active es
-        // false, asi que mirarlo a solas lo daba por offline y el servidor movia
-        // al Warrok por su cuenta, divergiendo del cliente que tiene autoridad.
+  
         NetworkIdentity ni = GetComponent<NetworkIdentity>();
         offlineMode = ni == null || (!NetworkServer.active && !NetworkClient.active);
 
