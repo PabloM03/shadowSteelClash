@@ -17127,6 +17127,7 @@ GameObject:
   - component: {fileID: 5449427327444681574}
   - component: {fileID: 3381827418582691313}
   - component: {fileID: 6963010960737393631}
+  - component: {fileID: 7711223344556677002}
   m_Layer: 0
   m_Name: Warrok
   m_TagString: Untagged
@@ -17226,6 +17227,7 @@ MonoBehaviour:
   syncInterval: 0
   knights:
   - {fileID: 0}
+  estadoIdle: Mutant Idle
 --- !u!114 &3849754742902516323
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -18843,3 +18845,18 @@ Transform:
   - {fileID: 646947628855340709}
   m_Father: {fileID: 6751786347351846386}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &7711223344556677002
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6081735645919461580}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a3f1c2d4e5b6478899aa0bb1cc2dd3ee, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  syncDirection: 0
+  syncMode: 0
+  syncInterval: 0

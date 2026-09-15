@@ -3,6 +3,12 @@ using System.Linq;
 using Mirror;
 using UnityEngine;
 
+// Solo el dueño ejecuta la IA. Todo lo que decide llega al resto por los dos
+// componentes de red del prefab: NetworkTransformHybrid (posicion y rotacion) y
+// NetworkAnimator (run, distance, attackType y los triggers). La vida va por
+// HealthSync. Aqui ya no hay ningun sync manual: el CmdSyncState que habia
+// escribia posicion y parametros encima de lo que esos componentes ya
+// replicaban, y los dos sistemas se pisaban.
 public class WarrokController : NetworkBehaviour
 {
     public List<Transform> knights = new List<Transform>();
@@ -14,35 +20,26 @@ public class WarrokController : NetworkBehaviour
     private ParticleSystem myParticleSystem;
     private ParticleSystem fireAttack;
     private Transform knight;
-    private HealthController healthController;
 
-
+    // Los ataques salen de Idle segun attackType y vuelven a Idle al terminar la
+    // animacion. Se sortea uno nuevo justo al volver a Idle, de modo que cada
+    // ataque dura lo que dure su animacion y el valor se mantiene estable
+    // mientras tanto. Sortearlo en cada frame cambiaba el parametro mas rapido
+    // de lo que se replica y cada cliente reproducia un ataque distinto.
     [SerializeField] private string estadoIdle = "Mutant Idle";
     private bool estabaEnIdle;
 
     // true cuando no hay red en absoluto (spawn offline local)
     private bool offlineMode;
 
-    
-    [SyncVar(hook = nameof(OnHealthChanged))]
-    private float syncedHealth = -1f;
-
-   
-    private const float estadoSyncInterval = 0.05f; // 20 Hz
-    private float nextSyncTime;
-
-    private const float healthSyncInterval = 0.2f; // 5 Hz: la vida cambia a golpes
-    private float nextHealthSync;
-    private float lastReportedHealth = float.NaN;
-
     void Start()
     {
-  
+        // En un servidor dedicado NetworkClient.active es false: mirarlo a solas
+        // lo daba por offline y el servidor movia al Warrok por su cuenta.
         NetworkIdentity ni = GetComponent<NetworkIdentity>();
         offlineMode = ni == null || (!NetworkServer.active && !NetworkClient.active);
 
         animator = GetComponent<Animator>();
-        healthController = GetComponent<HealthController>();
         enabled = false;
         myParticleSystem = transform.Find("explosion").GetComponent<ParticleSystem>();
         fireAttack = GetComponentsInChildren<ParticleSystem>()[0];
@@ -126,77 +123,6 @@ public class WarrokController : NetworkBehaviour
                 attackType = 0;
             }
         }
-
-        // Enviar estado al servidor para que lo redistribuya a todos
-        if (!offlineMode && isOwned && Time.time >= nextSyncTime)
-        {
-            nextSyncTime = Time.time + estadoSyncInterval;
-            CmdSyncState(
-                transform.position,
-                transform.rotation,
-                animator.GetBool("run"),
-                animator.GetFloat("distance"),
-                animator.GetInteger("attackType")
-            );
-        }
-
-        ReportarVidaSiCambio();
-    }
-
-    [Command]
-    private void CmdSyncState(Vector3 pos, Quaternion rot, bool run, float distance, int attackType)
-    {
-        RpcSyncState(pos, rot, run, distance, attackType);
-    }
-
-    [ClientRpc]
-    private void RpcSyncState(Vector3 pos, Quaternion rot, bool run, float distance, int attackType)
-    {
-        if (isOwned) return; // el dueño ya tiene los valores correctos
-
-        transform.position = pos;
-        transform.rotation = rot;
-        animator.SetBool("run", run);
-        animator.SetFloat("distance", distance);
-        animator.SetInteger("attackType", attackType);
-    }
-
-    // ---------- Sincronizacion ----------
-    // La vida no la cubren ni NetworkTransformHybrid ni NetworkAnimator, asi
-    // que va aparte por SyncVar.
-
-    private void ReportarVidaSiCambio()
-    {
-        if (offlineMode || !isOwned || healthController == null) return;
-        if (Time.time < nextHealthSync) return;
-
-        nextHealthSync = Time.time + healthSyncInterval;
-
-        float actual = healthController.Health;
-        if (!float.IsNaN(lastReportedHealth) && Mathf.Approximately(actual, lastReportedHealth))
-            return;
-
-        lastReportedHealth = actual;
-        CmdReportHealth(actual);
-    }
-
-    [Command]
-    private void CmdReportHealth(float value)
-    {
-        syncedHealth = value;
-    }
-
-    private void OnHealthChanged(float anterior, float nueva)
-    {
-        // El dueño ya tiene el valor bueno; esto es solo para los demas.
-        if (isOwned || nueva < 0f) return;
-
-        // El hook puede llegar antes de que Start() haya corrido.
-        if (healthController == null)
-            healthController = GetComponent<HealthController>();
-
-        if (healthController != null)
-            healthController.SetHealthFromNetwork(nueva);
     }
 
     private Transform GetClosestKnight()
@@ -204,7 +130,7 @@ public class WarrokController : NetworkBehaviour
         if (knights.Count == 0 || knights.All(k => k == null))
             return null;
         return knights
-            .Where(k => k.GetComponent<HealthController>().Health > 0)
+            .Where(k => k != null && k.GetComponent<HealthController>().Health > 0)
             .OrderBy(k => Vector3.Distance(transform.position, k.position))
             .FirstOrDefault();
     }

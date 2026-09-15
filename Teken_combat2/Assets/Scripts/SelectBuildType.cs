@@ -9,8 +9,6 @@ public class SelectBuildType : MonoBehaviour
              "si corre headless (batchmode / sin GPU) arranca como servidor, si no como cliente.")]
     private bool startAsServer = false;
 
-    private bool yaArrancado;
-
     private void OnEnable()
     {
         SceneManager.sceneLoaded += OnSceneLoaded;
@@ -33,10 +31,12 @@ public class SelectBuildType : MonoBehaviour
     {
         if (scene.name != "scene1 2") return;
 
-        // Start() y el evento sceneLoaded pueden dispararse ambos para la misma escena.
-        if (yaArrancado) return;
+        // Start() y el evento sceneLoaded pueden dispararse ambos para la misma
+        // escena; con esto el segundo no vuelve a arrancar nada. No vale un flag
+        // de instancia: este componente vive en el NetworkManager, que es
+        // DontDestroyOnLoad y sobrevive al cambio de escena, asi que un flag se
+        // quedaria a true para siempre e impediria reconectar al volver a entrar.
         if (NetworkServer.active || NetworkClient.active) return;
-        yaArrancado = true;
 
         if (NetworkManager.singleton == null)
         {

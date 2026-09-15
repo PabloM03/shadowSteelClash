@@ -5,56 +5,27 @@ using UnityEngine;
 using UnityEngine.UI;
 using Mirror;
 
+// Asignacion de equipos y registro de Warroks como enemigos.
+//
+// La sincronizacion de vida que vivia aqui (sondeo en Update + Cmd + Rpc con
+// registro por netId) se ha movido a HealthSync, compartido por Knight y Warrok.
+// Era un segundo sistema paralelo al de HealthController, llegaba con hasta un
+// segundo de retraso, y tenia comentada la llamada a Die(): la muerte de los
+// Knights nunca llegaba de forma fiable a los demas clientes.
 public class TeamManager : NetworkBehaviour
 {
-    // --- Ajuste para evitar jitter de 0 exacto en barras antes de confirmar muerte ---
-    private const float DeathEpsilon = 0.000f;
-    private const float HealthDeltaThreshold = 0.01f; // todo cambio real de vida (daño o curación)
-
-    private float lastSendTime = 0f;
-    private float lastSentHealth = -1f;
-
-    // Registro maestro en servidor: última vida válida por netId
-    private static readonly Dictionary<uint, float> healthRecords = new Dictionary<uint, float>();
-
-    // ====== Helpers comunes ======
-    private static void ApplyHealthAndRefreshUI(NetworkIdentity knightNi, float newHealth)
-    {
-        var hc = knightNi.GetComponent<HealthController>();
-        if (hc == null) return;
-
-        hc.Health = Mathf.Max(0f, newHealth);
-        hc.LifeOfBar(); // Debe dibujar desde hc.Health SIEMPRE
-    }
-
     private static void TryColorEnemies(HealthController hc)
     {
         if (hc == null) return;
         foreach (Transform enemy in hc.enemies)
         {
+            if (enemy == null) continue;
             Image bar = enemy.Find("Canvas/background/LifeBar")?.GetComponent<Image>();
             if (bar != null) bar.color = Color.red;
         }
     }
 
     // ====== Ciclo de vida en cliente ======
-    public override void OnStartLocalPlayer()
-    {
-        base.OnStartLocalPlayer();
-
-        var hc = GetComponent<HealthController>();
-        if (hc != null)
-        {
-            lastSentHealth = hc.Health;
-        }
-
-        // Reintento de sincronización individual (por si hay drift)
-        //InvokeRepeating(nameof(RequestServerResync), 2f, 5f);
-
-        // Solicitar sincronización completa del estado a la entrada
-        Invoke(nameof(RequestAllPlayersHealth), 1f);
-    }
-
     public override void OnStartClient()
     {
         base.OnStartClient();
@@ -69,165 +40,18 @@ public class TeamManager : NetworkBehaviour
         TryColorEnemies(GetComponent<HealthController>());
     }
 
-    private void RequestAllPlayersHealth()
-    {
-        if (isLocalPlayer)
-        {
-            CmdRequestAllHealth();
-        }
-    }
-
-    private void RequestServerResync()
-    {
-        if (isLocalPlayer)
-        {
-            CmdRequestMyLatestHealth();
-        }
-    }
-
-    private void Update()
-    {
-        if (!isLocalPlayer) return;
-
-        var hc = GetComponent<HealthController>();
-        if (hc == null) return;
-
-        float currentHealth = hc.Health;
-
-        // >>>>> OWNER-AUTHORITATIVE <<<<<
-        // Enviamos al servidor todo cambio significativo (daño o curación)
-        if (Mathf.Abs(currentHealth - lastSentHealth) > HealthDeltaThreshold || Time.time - lastSendTime >= 1f)
-        {
-            lastSentHealth = currentHealth;
-            lastSendTime = Time.time;
-            CmdSendMyHealthToServer(currentHealth);
-        }
-    }
-
-    // ====== Servidor: autoridad, guarda y propaga ======
+    // ====== Servidor ======
     public override void OnStartServer()
     {
         base.OnStartServer();
         Invoke(nameof(AssignTeams), 0.5f);
-    }
 
-    [Command]
-    private void CmdSendMyHealthToServer(float newHealth)
-    {
-        var hc = GetComponent<HealthController>();
-        if (hc == null) return;
-
-        // El servidor es autoridad final
-        float clamped = Mathf.Max(0f, newHealth);
-        hc.Health = clamped;
-        hc.LifeOfBar();
-
-        healthRecords[netId] = clamped;
-
-        if (clamped <= 0f)
-        {
-            // 1) Propaga "casi cero" para que barras no disparen muerte prematura
-            RpcSyncHealth(netId, DeathEpsilon);
-
-            // 2) Confirma 0 definitivo
-            //RpcSyncHealth(netId, 0f);
-
-            // 3) Ejecuta muerte en servidor y en todos los clientes
-            //hc.Die();             // servidor también muere (coherencia server-side)
-            //RpcInvokeDeath(netId); // clientes mueren
-        }
-        else
-        {
-            RpcSyncHealth(netId, clamped);
-        }
-    }
-
-    [Command]
-    private void CmdRequestMyLatestHealth(NetworkConnectionToClient sender = null)
-    {
-        float savedHealth;
-        if (!healthRecords.TryGetValue(netId, out savedHealth)) return;
-
-        if (savedHealth <= 0f)
-        {
-            //TargetForceHealthSync(sender, netId, DeathEpsilon);
-            TargetForceHealthSync(sender, netId, 0f);
-            TargetInvokeDeath(sender, netId);
-        }
-        else
-        {
-            TargetForceHealthSync(sender, netId, savedHealth);
-        }
-    }
-
-    [Command]
-    private void CmdRequestAllHealth(NetworkConnectionToClient sender = null)
-    {
-        foreach (var pair in healthRecords)
-        {
-            uint kId = pair.Key;
-            float h = pair.Value;
-
-            if (h <= 0f)
-            {
-                //TargetForceHealthSync(sender, kId, DeathEpsilon);
-                TargetForceHealthSync(sender, kId, 0f);
-                TargetInvokeDeath(sender, kId);
-            }
-            else
-            {
-                TargetForceHealthSync(sender, kId, h);
-            }
-        }
-    }
-
-    // ====== RPCs de sincronización ======
-    [ClientRpc]
-    private void RpcSyncHealth(uint knightNetId, float newHealth)
-    {
-        NetworkIdentity knightNi;
-        if (NetworkClient.spawned.TryGetValue(knightNetId, out knightNi))
-        {
-            ApplyHealthAndRefreshUI(knightNi, newHealth);
-        }
-    }
-
-    // Llama a Die() en TODAS las instancias del jugador indicado
-    [ClientRpc]
-    private void RpcInvokeDeath(uint knightNetId)
-    {
-        NetworkIdentity knightNi;
-        if (NetworkClient.spawned.TryGetValue(knightNetId, out knightNi))
-        {
-            var hc = knightNi.GetComponent<HealthController>();
-            if (hc == null) return;
-
-            // Con tu HealthController actual, Die() es internal: llamamos directo
-            hc.Die();
-        }
-    }
-
-    [TargetRpc]
-    private void TargetForceHealthSync(NetworkConnectionToClient target, uint knightNetId, float health)
-    {
-        NetworkIdentity knightNi;
-        if (NetworkClient.spawned.TryGetValue(knightNetId, out knightNi))
-        {
-            ApplyHealthAndRefreshUI(knightNi, health);
-        }
-    }
-
-    [TargetRpc]
-    private void TargetInvokeDeath(NetworkConnectionToClient target, uint knightNetId)
-    {
-        NetworkIdentity knightNi;
-        if (NetworkClient.spawned.TryGetValue(knightNetId, out knightNi))
-        {
-            var hc = knightNi.GetComponent<HealthController>();
-            if (hc == null) return;
-
-            hc.Die();
-        }
+        // Nota: no se reasignan equipos cuando alguien se desconecta. AssignTeams
+        // reparte por paridad del indice, asi que quitar a uno de en medio
+        // reordena la lista y puede convertir en enemigos a dos que eran
+        // aliados. Para que el que se va deje de contar basta con que su
+        // Transform quede destruido: HealthController lo limpia de enemies en el
+        // siguiente frame, la barra se oculta y nadie gana por un rival ausente.
     }
 
     // ====== Registro de Warroks ======

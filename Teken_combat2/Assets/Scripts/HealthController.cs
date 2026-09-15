@@ -17,17 +17,19 @@ public class HealthController : MonoBehaviour
     private bool iddle;
     private bool shield=false;
     private float y;
-    public float maxHealth; 
-    
+    public float maxHealth;
+
+    // Solo lectura desde fuera: la vida cambia por HealthUpdate en la maquina
+    // con autoridad y llega al resto por HealthSync. Nadie mas debe escribirla.
     public float Health
     {
         get { return health; }
-        set { health = value; }
     }
 
 
     private Animator animator; // Declarar la variable Animator
-    private NetworkAnimator netAnimator; // opcional: solo si el objeto se replica
+    private NetworkAnimator netAnimator; // replica los triggers del dueño al resto
+    private HealthSync healthSync;       // autoridad y replicacion de la vida
     public float power=1f;
     private Sounds sounds;
 
@@ -37,6 +39,7 @@ public class HealthController : MonoBehaviour
         // Inicializar el Animator obteniéndolo del mismo objeto
         animator = GetComponent<Animator>();
         netAnimator = GetComponent<NetworkAnimator>();
+        healthSync = GetComponent<HealthSync>();
         live = true;
         iddle = false;
         health *= power;
@@ -49,69 +52,55 @@ public class HealthController : MonoBehaviour
 
     void Update()
     {
-        int enemiesCount = (enemies != null) ? enemies.Count : 0;
+        // Quitar referencias a objetos que ya no existen (p.ej. un jugador que se
+        // desconecto). Si quedaran, seguirian contando como enemigos y podrian
+        // dar una victoria falsa o mantener la barra visible sin rival.
+        enemies.RemoveAll(e => e == null);
+        defeatedEnemies.RemoveWhere(e => e == null || !enemies.Contains(e));
 
-        if (enemies != null && enemies.Count > 0)
+        int enemiesCount = enemies.Count;
+
+        foreach (Transform enemy in enemies)
         {
-            foreach (Transform enemy in enemies)
+            enemyHealth = enemy.GetComponent<HealthController>();
+            if (enemyHealth == null) continue;
+
+            // Verifica si el enemigo está derrotado y si aún no se ha activado "win" para él
+            if (enemyHealth.Health <= 0 && health > 0 && live && !defeatedEnemies.Contains(enemy))
             {
-                if (enemy == null) continue; // Saltar si el enemigo es nulo
-
-                enemyHealth = enemy.GetComponent<HealthController>();
-                if (enemyHealth == null) continue;
-
-                // Verifica si el enemigo está derrotado y si aún no se ha activado "win" para él
-                if (enemyHealth.Health <= 0 && health > 0 && live && !defeatedEnemies.Contains(enemy))
-                {
-                    FireTrigger("win");
-                    defeatedEnemies.Add(enemy); // Marca el enemigo como derrotado
-                }
+                FireTrigger("win");
+                defeatedEnemies.Add(enemy); // Marca el enemigo como derrotado
             }
         }
 
-        //Debug.Log(defeatedEnemies.Count + "/" + enemiesCount + "/" + health);
+        bool mandoYo = TengoAutoridad();
 
-        //enemies.RemoveAll(e => e == null);
+        // WIN solo si habia alguien a quien derrotar. Antes, con la lista vacia,
+        // 0 == 0 ponia al personaje en WIN sin haber vencido a nadie: pasaba con
+        // un Warrok online sin ningun jugador enemigo.
+        bool hayEnemigos = enemiesCount > 0;
+        bool todosDerrotados = hayEnemigos && defeatedEnemies.Count >= enemiesCount;
 
-        //defeatedEnemies.RemoveWhere(e => e == null || !enemies.Contains(e));
+        if (mandoYo) animator.SetBool("WIN", todosDerrotados);
 
-        bool mandoYo = MandaLasAnimaciones();
-
-        if (defeatedEnemies.Count == enemiesCount)
-        {
-            if (mandoYo) animator.SetBool("WIN", true);
-            if (lifeOfBar != null && lifeOfBar.transform != null && lifeOfBar.transform.parent != null)
-                lifeOfBar.transform.parent.transform.gameObject.SetActive(false);
-        }
-        else
-        {
-            if (mandoYo) animator.SetBool("WIN", false);
-            if (live && lifeOfBar != null && lifeOfBar.transform != null && lifeOfBar.transform.parent != null)
-                lifeOfBar.transform.parent.gameObject.SetActive(true);
-        }
-
-        if(health<0 && iddle)
-        {
-            FireTrigger("death");
-        }
-
-        iddle=false;
+        // Barra de vida visible solo mientras haya un enemigo presente y sin
+        // derrotar: se oculta al derrotarlo, al morir, o si el rival desaparece
+        // de la escena.
+        if (lifeOfBar != null && lifeOfBar.transform.parent != null)
+            lifeOfBar.transform.parent.gameObject.SetActive(live && hayEnemigos && !todosDerrotados);
 
         if (health > 0 && !live)
         {
             // Intento de resucitar si la vida volvió a ser mayor que 0
             Resucitate();
         }
-
-        if((health<=0 || !live) && animator.enabled == false) Die();
-        
     }
 
     // Función que recibe un string con los valores de ataque
     public void ApplyAttack(string attackParams)
     {
-	int type = 1;
-	Debug.Log("Vida del "+ this.gameObject.name + ": " + health);
+        int type = 1;
+        Debug.Log("Vida del "+ this.gameObject.name + ": " + health);
         // Divide el string en sus valores (ángulo, distancia, daño)
         string[] parameters = attackParams.Split('/');
         if (parameters.Length < 3) return;
@@ -119,20 +108,20 @@ public class HealthController : MonoBehaviour
         float angleRange = float.Parse(parameters[0]);
         float maxDistance = float.Parse(parameters[1]);
         float damage = float.Parse(parameters[2]);
-	if (parameters.Length == 4) type = int.Parse(parameters[3]);
+        if (parameters.Length == 4) type = int.Parse(parameters[3]);
 
-	if (power>1) maxDistance+=power;
+        if (power>1) maxDistance+=power;
 
         // Comprobar si el receptor está dentro del área de ataque
-         List<Transform> dangersEnemies=IsTargetInRange(angleRange, maxDistance);
-	if(dangersEnemies.Count>0) sounds.AttackSound(type);
-       
-	foreach (Transform enemy in dangersEnemies)
-	{ 
-	    enemyHealth = enemy.GetComponent<HealthController>();
-            // Llama a HealthUpdate en el receptor si está en el rango de ataque 
+        List<Transform> dangersEnemies=IsTargetInRange(angleRange, maxDistance);
+        if(dangersEnemies.Count>0) sounds.AttackSound(type);
+
+        foreach (Transform enemy in dangersEnemies)
+        {
+            enemyHealth = enemy.GetComponent<HealthController>();
+            // Llama a HealthUpdate en el receptor si está en el rango de ataque.
+            // Solo surtira efecto en la maquina con autoridad sobre ese receptor.
             enemyHealth.HealthUpdate(damage*power,this.transform); // Aplica el daño al receptor
-            
         }
     }
 
@@ -189,25 +178,34 @@ public class HealthController : MonoBehaviour
 
     public void HealthUpdate(float damage, Transform enemy)
     {
+        // Solo la maquina con autoridad sobre ESTE personaje (su dueño, o la
+        // local sin red) hace que el golpe cuente. El atacante, viendo su propia
+        // copia no autoritativa del rival, y los espectadores tambien reproducen
+        // la animacion de ataque y llegan aqui: si aplicaran el daño por su
+        // cuenta, cada uno calcularia un resultado distinto segun su vision con
+        // latencia de la pelea. El resultado real les llega por HealthSync.
+        if (!TengoAutoridad()) return;
+
         UpdatePositionRelativeToEnemy(enemy);
         bool isFacingEnemy = IsFacingEnemy(enemy,30);
-        
+
         // Comprobar si el objeto tiene un escudo activo
         bool hasShield = GetComponent<KnightController>()?.HasShield(isFacingEnemy) ?? false;
 
         // Si tiene escudo, no aplicamos el daño y salimos de la función
         if (hasShield || shield)
         {
-	    Debug.Log(this.gameObject.name + " tiene escudo activo. No se aplicará daño. Vida: " + health);
-	
-        FireTrigger("shieldReaction");
-        sounds.ShieldSound();
-	
+            Debug.Log(this.gameObject.name + " tiene escudo activo. No se aplicará daño. Vida: " + health);
+
+            FireTrigger("shieldReaction");
+            sounds.ShieldSound();
+
             return;
         }
 
         // Si no tiene escudo, aplicar daño
         health -= damage;
+        if (healthSync != null) healthSync.ReportHealth(health); // al momento, no por sondeo
         animator.SetFloat("health", health);
         Debug.Log(this.gameObject.name + ": Vida actual: " + health);
 
@@ -216,20 +214,18 @@ public class HealthController : MonoBehaviour
         if (health <= 0 || !live)
         {
             Die();
-	    return;
+            return;
         }
 
-	    FireTrigger("coupReaction");
+        FireTrigger("coupReaction");
     }
 
 
     internal void Die()
     {
-        // Update() llama aqui en cada frame mientras el personaje esta muerto, y
-        // HealthUpdate tambien entra si le pegan a un cadaver. Antes daba igual
-        // porque el trigger se quedaba en local sobre un animator desactivado,
-        // pero ahora se replica por red: sin este guard la animacion de muerte
-        // se repite en los demas clientes cada vez que golpean al muerto.
+        // Idempotente: HealthUpdate y SetHealthFromNetwork pueden llamar aqui mas
+        // de una vez para la misma muerte, y si le pegan a un cadaver tambien.
+        // Sin este guard el trigger de muerte se replicaria en bucle.
         if (!live) return;
 
         Debug.Log(this.gameObject.name + " ha muerto.");
@@ -237,7 +233,7 @@ public class HealthController : MonoBehaviour
         FireTrigger("death");
         live = false;
         y = 0;
-        
+
         lifeOfBar.transform.parent.gameObject.SetActive(false);
 
         StartCoroutine(DeathAfterDelay());
@@ -278,6 +274,8 @@ public class HealthController : MonoBehaviour
         }
     }
 
+    // Animation Event al final de los clips de muerte: congela el animator, y con
+    // el la IA del Warrok, que deja de procesar en cuanto animator.enabled es false.
     private void finish()
     {
         var netIdentity = GetComponent<NetworkIdentity>();
@@ -312,9 +310,12 @@ public class HealthController : MonoBehaviour
         }
     }
 
+    // Se conserva por compatibilidad con Animation Events que lo llamen. La
+    // muerte ya no depende de este flag: se decide directamente en HealthUpdate
+    // (autoridad) y en SetHealthFromNetwork (receptores).
     public void deathAnimationUpdate()
     {
-	iddle = true;
+        iddle = true;
     }
 
     public void ControllerLayer(int layerIndex)
@@ -327,7 +328,7 @@ public class HealthController : MonoBehaviour
 
     public void ResetWin()
     {
-	ClearTrigger("win");
+        ClearTrigger("win");
     }
 
     // Resucitar si la vida es mayor que 0 y actualmente está marcado como muerto (live == false)
@@ -336,7 +337,7 @@ public class HealthController : MonoBehaviour
         //imprime la vida actual y el estado de live para depuración
         Debug.Log("Resucitate Check - Vida: " + health + ", live: " + live);
         //lanza un bool para resucitar animacion
-        
+
         ClearTrigger("death");
         FireTrigger("resucitate");
         // Reactivar NetworkTransformHybrid para la sincronización
@@ -394,13 +395,14 @@ public class HealthController : MonoBehaviour
     }
 
 
-    // Aplica la vida que llega replicada desde el dueño del personaje.
-    // No reproduce sonidos ni reacciones: los triggers del animator ya viajan
-    // por NetworkAnimator, y duplicarlos aqui los dispararia dos veces.
+    // Aplica la vida que llega replicada desde la maquina con autoridad.
+    // Los triggers de reaccion no se disparan aqui: ya viajan por NetworkAnimator
+    // desde el dueño, y duplicarlos los reproduciria dos veces.
     public void SetHealthFromNetwork(float value)
     {
         if (Mathf.Approximately(health, value)) return;
 
+        bool perdioVida = value < health;
         health = value;
 
         if (animator != null)
@@ -410,8 +412,14 @@ public class HealthController : MonoBehaviour
         if (lifeOfBar != null && maxHealth > 0f)
             LifeOfBar();
 
+        // El sonido del golpe recibido es local a cada maquina: quien no tiene
+        // autoridad no pasa por HealthUpdate, asi que se reproduce aqui al
+        // recibir la bajada de vida. El dueño ya lo oyo en HealthUpdate.
+        if (perdioVida && sounds != null)
+            sounds.HurtSound();
+
         // La muerte no es solo animacion: tambien apaga collider, rigidbody y
-        // barra de vida, y eso hay que hacerlo en cada maquina.
+        // barra de vida, y eso hay que hacerlo en cada maquina, al momento.
         if (health <= 0f && live && animator != null)
             Die();
     }
@@ -419,27 +427,24 @@ public class HealthController : MonoBehaviour
 
     public void ActivateShield(float duration)
     {
-	    StartCoroutine(TemporarilySetTrue(duration)); // Inicia la corutina al inicio
+        StartCoroutine(TemporarilySetTrue(duration)); // Inicia la corutina al inicio
     }
 
     private IEnumerator TemporarilySetTrue(float seconds)
     {
-	shield = true;
+        shield = true;
         yield return new WaitForSeconds(seconds); // Espera el tiempo especificado
         shield = false; // Cambia la variable a false
     }
 
     // Mirror NO replica los triggers del Animator por su cuenta: hay que
-    // dispararlos a traves de NetworkAnimator. Los parametros bool, float e int
-    // si viajan solos, y por eso el Knight (que solo usa SetBool) se veia bien
-    // mientras estas reacciones se quedaban en local.
-    // Si no hay red, o si no somos el cliente dueño, se dispara en local: el no
-    // dueño lo recibira replicado desde quien tiene la autoridad.
+    // dispararlos a traves de NetworkAnimator desde el cliente dueño. Los
+    // parametros bool, float e int si viajan solos.
+    // Quien no tiene autoridad no dispara nada: le llegara replicado. Si lo
+    // disparase aqui ademas, cada instancia animaria por su cuenta y se duplicaria.
     private void FireTrigger(string triggerName)
     {
-        // Quien no manda no dispara nada: le llegara replicado. Si lo disparase
-        // aqui ademas, cada instancia animaria por su cuenta y se duplicaria.
-        if (!MandaLasAnimaciones()) return;
+        if (!TengoAutoridad()) return;
 
         if (PuedeReplicarTriggers())
             netAnimator.SetTrigger(triggerName);
@@ -449,7 +454,7 @@ public class HealthController : MonoBehaviour
 
     private void ClearTrigger(string triggerName)
     {
-        if (!MandaLasAnimaciones()) return;
+        if (!TengoAutoridad()) return;
 
         if (PuedeReplicarTriggers())
             netAnimator.ResetTrigger(triggerName);
@@ -457,18 +462,15 @@ public class HealthController : MonoBehaviour
             animator.ResetTrigger(triggerName);
     }
 
-    // Solo la instancia con autoridad decide las animaciones; las demas las
-    // reciben. Sin red manda siempre la local. En el servidor dedicado tampoco
-    // manda, porque la autoridad la tiene el cliente dueno.
-    private bool MandaLasAnimaciones()
+    // Autoridad sobre la vida y las animaciones de ESTE personaje. Sin HealthSync
+    // (objeto sin red) manda siempre la instancia local.
+    private bool TengoAutoridad()
     {
-        if (netAnimator == null) return true;
-        if (!NetworkClient.active && !NetworkServer.active) return true;
-        return netAnimator.isOwned;
+        return healthSync == null || healthSync.TengoAutoridad();
     }
 
-    // NetworkAnimator con clientAuthority solo acepta triggers del cliente
-    // dueño; en cualquier otro caso avisa por consola y los descarta.
+    // NetworkAnimator con clientAuthority solo acepta triggers del cliente dueño;
+    // en cualquier otro caso avisa por consola y los descarta.
     private bool PuedeReplicarTriggers()
     {
         return netAnimator != null && NetworkClient.active && netAnimator.isOwned;
